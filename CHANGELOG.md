@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+> v0.2.2 was published to npm before the README commit that this section describes
+> landed, so its tarball lacks both sections; its tag was withdrawn, the release
+> marked superseded, and the same change ships in v0.2.3.
+
 - The README now says where the two things a review of 0.2.x asks about live: how
   the shipped proxy binaries are made (built locally by `npm run native:all`, not in a
   release workflow; not byte-reproducible from a tag, since Go embeds its build path and
