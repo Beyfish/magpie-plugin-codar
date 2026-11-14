@@ -1,7 +1,7 @@
 # Keep the repository's text as it was written: LF, everywhere.
 #
-# The style test (test/style.test.mjs) asserts that every text file is LF and
-# ends with one newline — and a checkout that turned its lines into CRLF,
+# The style test (test/style.test.mjs) asserts that every .mjs and .md file is LF
+# and ends with one newline — and a checkout that turned its lines into CRLF,
 # which is what git's core.autocrlf=true does by default on Windows, would
 # fail it before the plugin's own tests even run. `eol=lf` is what holds that
 # line on every platform: it applies even where core.autocrlf=true, so a

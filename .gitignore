@@ -5,3 +5,12 @@ node_modules/
 .env
 .env.*
 .claude/
+
+# The Go proxy's builds are made by scripts/build-native.mjs on the machine
+# that publishes (native/cmd/codar-proxy holds the source). They are not part
+# of the repository: five platforms is ~40 MB of binaries no one can review.
+native/bin/
+# `go build ./...` inside the source directory leaves a binary with the
+# package's own name, which a commit of native/ would otherwise sweep in.
+native/cmd/codar-proxy/codar-proxy
+native/cmd/codar-proxy/codar-proxy.exe

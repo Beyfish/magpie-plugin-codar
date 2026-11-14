@@ -20,11 +20,13 @@
 // Walking the tree means a file is covered the moment it lands. Dot-directories
 // are skipped: .git and .claude (worktrees of this repo, which would otherwise
 // be scanned a second time under a different checkout) are not this tree's
-// text, and .github holds no .mjs or .md today.
+// text; .github is scanned, because a workflow file that came back as CRLF is
+// exactly what .gitattributes's eol=lf exists to prevent, and CI runs the suite
+// on Windows.
 
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { readFileSync, readdirSync } from "node:fs"
+import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -33,7 +35,11 @@ const root = join(here, "..")
 
 const walk = (dir, ext, out = []) => {
   for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
-    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue
+    // The dot-directories that are scanned: CI's configuration is this
+    // tree's text (a CRLF workflow file is a Windows problem the LF rule
+    // exists for), while .git and .claude are not.
+    if (entry.name === "node_modules") continue
+    if (entry.name.startsWith(".") && entry.name !== ".github") continue
     const rel = dir ? `${dir}/${entry.name}` : entry.name
     if (entry.isDirectory()) walk(rel, ext, out)
     else if (entry.name.endsWith(ext)) out.push(rel)
@@ -41,8 +47,13 @@ const walk = (dir, ext, out = []) => {
   return out
 }
 
-const JS = walk("", ".mjs")
-const MD = walk("", ".md")
+// text is every file a text rule in .editorconfig names: the JS and markdown
+// the suite was the only place for, plus the JSON and YAML the metadata and CI
+// configuration are written in. A CRLF workflow file is what .gitattributes's
+// eol=lf exists to prevent, and it was outside every check.
+const TEXT = [...walk("", ".mjs"), ...walk("", ".md"), ...walk("", ".json"), ...walk("", ".yml"), ...walk("", ".yaml")]
+const JS = TEXT.filter((f) => f.endsWith(".mjs"))
+const MD = TEXT.filter((f) => f.endsWith(".md"))
 
 const read = (rel) => readFileSync(join(root, rel), "utf8")
 
@@ -54,7 +65,7 @@ test("the tree walk finds the files it is meant to guard", () => {
   // call it ok" failure the runtime probes guard against. Pin the floor and
   // the files that must be in it, including this one.
   assert.ok(JS.length >= 6, `the walk found only ${JS.length} .mjs files`)
-  for (const rel of ["index.mjs", "internal.mjs", "catalog.mjs", "scripts/catalog.mjs", "test/plugin.test.mjs", "test/style.test.mjs"]) {
+  for (const rel of ["index.mjs", "lib/internal.mjs", "lib/catalog.mjs", "scripts/catalog.mjs", "test/plugin.test.mjs", "test/style.test.mjs"]) {
     assert.ok(JS.includes(rel), `the walk missed ${rel}`)
   }
   assert.ok(MD.length >= 2, `the walk found only ${MD.length} .md files`)
@@ -63,6 +74,24 @@ test("the tree walk finds the files it is meant to guard", () => {
   // package (it is developer-facing), and would make a tarball test red for no
   // reason even though the checkout walk still finds it.
   assert.ok(MD.includes("README.md") && MD.includes("CHANGELOG.md"), "the walk missed a documentation file")
+  // JSON and YAML are covered where they exist: package.json ships, and the
+  // tarball carries it. .github is a checkout's own (it is deliberately not
+  // in `files`), so the CI configuration is required only where the
+  // directory is there to walk — a tarball must not fail on a file it was
+  // never meant to carry.
+  assert.ok(TEXT.includes("package.json"), "the walk missed package.json")
+  if (existsSync(join(root, ".github"))) {
+    assert.ok(TEXT.some((f) => /^\.github\/workflows\/.+\.ya?ml$/.test(f)), "the walk missed the CI configuration")
+  }
+})
+
+test("every JSON and YAML text file is LF, with no CR anywhere", () => {
+  const config = TEXT.filter((f) => /\.(json|ya?ml)$/.test(f))
+  assert.ok(config.length > 0, "the walk found no JSON or YAML files")
+  for (const rel of sortedFiles(config)) {
+    const cr = read(rel).indexOf("\r")
+    assert.equal(cr, -1, `${rel} has a CR; the repo is LF-only`)
+  }
 })
 
 test("every JS file is LF, with no CR anywhere", () => {

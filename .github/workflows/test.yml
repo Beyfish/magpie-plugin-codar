@@ -11,12 +11,14 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
-        # 18 is the engine floor in package.json; 24 is current. magpie runs
-        # plugins on Bun, so that is tested too — it is the runtime the tests
-        # are least able to stand in for.
-        node: ["18", "20", "22", "24"]
+        # 20 is the engine floor in package.json and the oldest line worth
+        # keeping; 24 is current. magpie runs plugins on Bun, so that is
+        # tested too — it is the runtime the tests are least able to stand in
+        # for.
+        node: ["20", "22", "24"]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -25,6 +27,7 @@ jobs:
       - run: node --test
 
   bun:
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -35,12 +38,57 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: "1.4.4"
+      # the tarball-gate tests run here too, and the gate packs with npm and
+      # runs the packed suite with node (scripts/tarball.mjs), so the Bun job
+      # needs a Node and an npm it can find rather than whatever the image
+      # happens to have
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "24"
       - run: bun test
+
+  # the suite must pass from the published artifact, not only from a checkout:
+  # `files` is what decides what ships, and a test that references a file
+  # outside it passes here and fails for every user. 0.1.2 was exactly that.
+  # It also gets the native job's builds, so the gate checks a tarball that
+  # actually carries all five; with a bare checkout it would check none and
+  # still pass.
+  tarball:
+    needs: native
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.4"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: native-bin
+          path: native/bin
+      - run: node scripts/tarball.mjs --require-bun
 
   # the plugin reads a file under the user's home directory on every platform
   # (the read-from-this-machine sign-in), and ~ is where the bugs live
   windows:
     runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "24"
+      - run: node --test
+      # npm and tar are .cmd shims here, and the tarball carries CRLF paths:
+      # this is the only job that runs the gate's Windows branches
+      - run: node scripts/tarball.mjs
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -48,11 +96,35 @@ jobs:
           node-version: "24"
       - run: node --test
 
-  macos:
-    runs-on: macos-latest
+  # the plugin's own requests can go out through a small Go proxy that rebuilds
+  # the Codar desktop sidecar's transport (native/cmd/codar-proxy). Its tests
+  # pin what leaves the proxy — the sidecar's headers, its proxy decision, its
+  # last-address dialer — and the build pins each platform's Go toolchain,
+  # because a module's go directive decides which GODEBUG defaults the binary
+  # carries, and those decide the TLS ClientHello.
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.24.3"
+          cache: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: "24"
-      - run: node --test
+      - run: cd native && go vet ./... && go test ./...
+      # the Windows artifact must come from Go 1.26.7 under a go 1.24 module,
+      # as the desktop's Windows sidecar does (its DefaultGODEBUG is the go
+      # 1.24 set); the script refuses a build whose defaults are not the
+      # platform sidecar's
+      - run: node scripts/build-native.mjs --all
+      - run: node scripts/build-native.mjs --check --strict
+      # the tarball job packs these, so its gate checks a package that carries
+      # the builds this job just verified
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: native-bin
+          path: native/bin/
+          if-no-files-found: error
