@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.2] - 2026-11-14
+## [0.2.3] - 2026-11-14
 
 ### Changed
 
@@ -1033,7 +1033,8 @@ Initial release.
 - A test suite (187 tests) on Node 18–24 and Bun across Linux, macOS and
   Windows, including a formatting test that pins `.editorconfig`.
 
-[Unreleased]: https://github.com/MisonL/magpie-plugin-codar/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/MisonL/magpie-plugin-codar/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.2.3
 [0.2.2]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.2.2
 [0.2.1]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.2.1
 [0.2.0]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.2.0
