@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-14
+
+### Changed
+
+- The README now says where the two things a review of 0.2.x asks about live: how
+  the shipped proxy binaries are made (built locally by `npm run native:all`, not in a
+  release workflow; not byte-reproducible from a tag, since Go embeds its build path and
+  the binaries are not committed — what a tag fixes is the source and the toolchain), what
+  CI and the publish gate do and do not check, and exactly where the account's name and
+  password go (the vendor's own `POST /v1/login`, once, never kept).
+
 ## [0.2.1] - 2026-11-14
 
 ### Fixed
@@ -1022,7 +1033,8 @@ Initial release.
 - A test suite (187 tests) on Node 18–24 and Bun across Linux, macOS and
   Windows, including a formatting test that pins `.editorconfig`.
 
-[Unreleased]: https://github.com/MisonL/magpie-plugin-codar/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/MisonL/magpie-plugin-codar/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.2.2
 [0.2.1]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.2.1
 [0.2.0]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.2.0
 [0.1.2]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.1.2
