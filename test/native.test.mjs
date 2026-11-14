@@ -41,6 +41,11 @@ const headerFor = (os, arch) => {
   return header
 }
 
+// Windows has no unix sockets to bind here (listen answers EACCES), and
+// these tests speak the proxy's unix transport. The loopback TCP transport
+// the proxy uses on Windows has its own test, which runs everywhere.
+const NO_UNIX = { skip: process.platform === "win32" }
+
 // listen answers every connection with handler(bytes, socket) and gives back
 // a Unix socket path to send to.
 async function listen(handler) {
@@ -81,7 +86,7 @@ async function listen(handler) {
 
 const request = (path, init = {}) => sendVia({ transport: "unix", address: path }, new URL("https://api.claw.speedai.com/v1/codar/models"), init)
 
-test("the request carries the vendor's Host, the two vendor headers and the body", async () => {
+test("the request carries the vendor's Host, the two vendor headers and the body", NO_UNIX, async () => {
   let seen
   const s = await listen((r, socket) => {
     seen = r
@@ -106,7 +111,7 @@ test("the request carries the vendor's Host, the two vendor headers and the body
   }
 })
 
-test("a byte view leaves as its own bytes, whatever kind of view it is", async () => {
+test("a byte view leaves as its own bytes, whatever kind of view it is", NO_UNIX, async () => {
   // fetch sends the bytes a view spans; Buffer.from(view) reads a DataView's
   // byte-length field instead, so a DataView went out empty and a typed
   // array went out as its joined numbers. A declared-writable body never
@@ -154,7 +159,7 @@ test("a TCP-mode request carries the token and nothing the vendor would see", as
   }
 })
 
-test("a chunked answer is read to its last chunk", async () => {
+test("a chunked answer is read to its last chunk", NO_UNIX, async () => {
   const s = await listen((r, socket) => {
     // no close from this side: the client must let go of the socket once the
     // terminal chunk has arrived, not wait for the far side to hang up
@@ -185,7 +190,7 @@ test("a chunked answer is read to its last chunk", async () => {
   }
 })
 
-test("a chat request writes the credential and version its own SDK uses, and nothing else", async () => {
+test("a chat request writes the credential and version its own SDK uses, and nothing else", NO_UNIX, async () => {
   // The vendor's Anthropic models authenticate with X-Api-Key and state
   // Anthropic-Version; a proxy that forwarded only Authorization and
   // Content-Type would strip both and the request would arrive with no
@@ -221,7 +226,7 @@ test("a chat request writes the credential and version its own SDK uses, and not
   }
 })
 
-test("a streamed answer reaches the reader before the vendor has finished", async () => {
+test("a streamed answer reaches the reader before the vendor has finished", NO_UNIX, async () => {
   // A chat answer is read as it arrives: if the client waited for the last
   // chunk, the host would show a whole answer at once instead of token by
   // token — which is exactly what a buffered read of an event stream does.
@@ -274,7 +279,7 @@ test("an answer the proxy does not carry is left to the ordinary fetch", async (
   }
 })
 
-test("a refused streamed answer is still readable as the vendor's own JSON", async () => {
+test("a refused streamed answer is still readable as the vendor's own JSON", NO_UNIX, async () => {
   // A chat request streams; its refusal is a short JSON document, and the host
   // reads it with text()/json() to quote the vendor's sentence. While every
   // streamed answer refused text(), the reason was lost behind "was streamed".
@@ -355,7 +360,7 @@ test("a body only fetch knows how to encode leaves through fetch, not a TypeErro
   }
 })
 
-test("answer headers read through forEach give the callback the collection", async () => {
+test("answer headers read through forEach give the callback the collection", NO_UNIX, async () => {
   // fetch hands a Headers as forEach's third argument; a caller that looks up
   // another header inside the callback gets the same answers here. It must be
   // the shim, not the Map behind it: a Headers looks names up without regard
@@ -379,7 +384,7 @@ test("answer headers read through forEach give the callback the collection", asy
   }
 })
 
-test("an interim 1xx answer is read past, not taken for the answer", async () => {
+test("an interim 1xx answer is read past, not taken for the answer", NO_UNIX, async () => {
   // 100 Continue and 103 Early Hints are interim: the final head follows on
   // the same connection. Read as the answer, the caller got status 100 with an
   // empty body and the real answer was thrown away — a request that then
@@ -412,7 +417,7 @@ test("an interim 1xx answer is read past, not taken for the answer", async () =>
   }
 })
 
-test("a chunk whose data is not followed by CRLF is refused, not read past", async () => {
+test("a chunk whose data is not followed by CRLF is refused, not read past", NO_UNIX, async () => {
   // Between chunks the wire carries exactly CRLF (RFC 9112 §7.1). Skipping two
   // bytes without reading them took anything for the delimiter, and a peer
   // that wrote something else had its bytes read as the next size line.
@@ -428,7 +433,7 @@ test("a chunk whose data is not followed by CRLF is refused, not read past", asy
   }
 })
 
-test("a chunked answer cut anywhere—in the size line, a chunk, or the terminal block—reads the same", async () => {
+test("a chunked answer cut anywhere—in the size line, a chunk, or the terminal block—reads the same", NO_UNIX, async () => {
   // the body "hello world" in two chunks, with no trailers; written byte by
   // byte so every boundary (size line, data, the trailing CRLF, the "0" line,
   // the final blank line) falls between socket reads
@@ -463,7 +468,7 @@ test("a chunked answer cut anywhere—in the size line, a chunk, or the terminal
   }
 })
 
-test("an answer with no stated length is read until the socket closes", async () => {
+test("an answer with no stated length is read until the socket closes", NO_UNIX, async () => {
   const s = await listen((r, socket) => {
     socket.write("HTTP/1.1 503 Service Unavailable\r\nRetry-After: 3\r\n\r\n{\"detail\":\"busy\"}")
     socket.end()
@@ -494,7 +499,7 @@ test("an answer with no stated length is read until the socket closes", async ()
   }
 })
 
-test("an aborted request rejects as an abort and leaves the socket", async () => {
+test("an aborted request rejects as an abort and leaves the socket", NO_UNIX, async () => {
   const s = await listen(() => {}) // answers nothing
   try {
     const ctl = new AbortController()
@@ -506,7 +511,7 @@ test("an aborted request rejects as an abort and leaves the socket", async () =>
   }
 })
 
-test("a signal already aborted rejects as an abort before anything is sent", async () => {
+test("a signal already aborted rejects as an abort before anything is sent", NO_UNIX, async () => {
   // abort() runs before the connect handlers are attached, and cleanup() reads
   // the deadline. With the deadline declared after that check, this path threw
   // a ReferenceError ("Cannot access 'deadline' before initialization") and
@@ -522,7 +527,7 @@ test("a signal already aborted rejects as an abort before anything is sent", asy
   }
 })
 
-test("a streamed answer is measured against the streaming cap, not the buffered one", async () => {
+test("a streamed answer is measured against the streaming cap, not the buffered one", NO_UNIX, async () => {
   // A chat request streams, and its cap is STREAM_ANSWER_BYTES (64 MiB). The
   // stated-length precheck compared against the buffered cap (8 MiB), so a 9
   // MiB event stream failed with a message about a bound it never reached. The
@@ -550,7 +555,7 @@ test("a streamed answer is measured against the streaming cap, not the buffered 
   }
 })
 
-test("a request whose caller passed no signal still ends", async () => {
+test("a request whose caller passed no signal still ends", NO_UNIX, async () => {
   const s = await listen(() => {}) // never answers, never hangs up
   try {
     // request() always passes a signal; this is the direct-call boundary. The
@@ -567,7 +572,7 @@ test("a request whose caller passed no signal still ends", async () => {
   }
 })
 
-test("an answer past the cap is refused while it arrives, not after it is held", async () => {
+test("an answer past the cap is refused while it arrives, not after it is held", NO_UNIX, async () => {
   // chunked, so no stated length can be checked up front: the refusal has to
   // come from the bytes counted as they arrive (11 bytes against a cap of 10)
   const s = await listen((r, socket) => {
@@ -596,7 +601,7 @@ test("an answer past the cap is refused while it arrives, not after it is held",
   }
 })
 
-test("a chunk line or trailer that never ends is refused, not buffered", async () => {
+test("a chunk line or trailer that never ends is refused, not buffered", NO_UNIX, async () => {
   // 128 KiB with no CRLF: past the 64 KiB cap for the framing lines
   const flood = "a".repeat(131072)
   for (const wire of [
@@ -619,7 +624,7 @@ test("a chunk line or trailer that never ends is refused, not buffered", async (
   }
 })
 
-test("a malformed chunk size is refused, not looped on", async () => {
+test("a malformed chunk size is refused, not looped on", NO_UNIX, async () => {
   // "-1" parsed to a negative size, and the state machine then neither
   // consumed nor returned: a synchronous hang no timer could break. "1x" and
   // "+5" were read as sizes too.
@@ -640,7 +645,7 @@ test("a malformed chunk size is refused, not looped on", async () => {
   }
 })
 
-test("a bodiless status is complete at the head, and a bad length fails fast", async () => {
+test("a bodiless status is complete at the head, and a bad length fails fast", NO_UNIX, async () => {
   const s = await listen((r, socket) => {
     socket.on("error", () => {})
     socket.write("HTTP/1.1 204 No Content\r\n\r\n") // and keeps the connection open
@@ -665,7 +670,7 @@ test("a bodiless status is complete at the head, and a bad length fails fast", a
   }
 })
 
-test("a bodiless answer is complete at its head, whatever its headers say", async () => {
+test("a bodiless answer is complete at its head, whatever its headers say", NO_UNIX, async () => {
   // 1xx/204/304 never carry content (RFC 9110), and a HEAD answer repeats the
   // GET's headers — a Transfer-Encoding among them. Read as chunked before the
   // bodiless rule, a 204/304/HEAD returned the "body" of a response that has
@@ -729,7 +734,7 @@ test("a bodiless answer is complete at its head, whatever its headers say", asyn
   }
 })
 
-test("a response head past the cap is refused even when it arrived complete", async () => {
+test("a response head past the cap is refused even when it arrived complete", NO_UNIX, async () => {
   // The cap used to run only while the head had not ended yet: a peer that sent
   // one 70 KB header block in a single write was parsed whole. The same head
   // split across writes was already refused.

@@ -69,6 +69,10 @@ jobs:
         with:
           name: native-bin
           path: native/bin
+      # upload/download-artifact carries bytes, not modes: the builds come
+      # back read-only, and the gate rightly refuses a package whose proxy
+      # cannot be run. A local build leaves them executable; restore that.
+      - run: chmod +x native/bin/*
       - run: node scripts/tarball.mjs --require-bun
 
   # the plugin reads a file under the user's home directory on every platform

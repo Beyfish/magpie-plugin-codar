@@ -7,197 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-14
+
+### Fixed
+
+- The suite tried to bind unix sockets on Windows: twenty-one of
+  `test/native.test.mjs`'s tests speak the proxy's unix transport, which Windows
+  Node cannot listen on (`EACCES`), so they now skip there. The loopback TCP
+  transport the proxy uses on Windows keeps its own test, which runs on every
+  platform.
+- The `tarball` CI job would not take the package it was given:
+  upload/download-artifact carries bytes, not modes, so the builds the `native`
+  job uploaded came back read-only, and the gate rightly refuses a package
+  whose proxy cannot be run. The job restores the executable bit after
+  downloading, as a local build leaves it.
+
 ## [0.2.0] - 2026-11-14
-
-### Added
-
-- A WeChat QR sign-in: the vendor's own code flow
-  (`POST /v1/wechat/login/qrcode` → `{scene, qr_url}`, then
-  `POST /v1/wechat/login/status {scene}` every two seconds, as the web app
-  polls it). The plugin serves the page on `127.0.0.1` and makes both calls
-  itself, so the image the vendor drew is shown from the plugin and the token
-  in the status answer never reaches the page. Expiry (including the vendor's
-  business code 404) refreshes the code; a WeChat that is not bound to an
-  account, or a scan that lands on the vendor's IP check, ends with the sign-in
-  that can finish it rather than spinning.
-
-- `POST /v1/user/verify_ip` is now reached the way the vendor's web app
-  reaches it. When a password sign-in answers `code 201` /
-  `ip_verify_required`, the plugin keeps the temp token that refusal carried
-  and the SMS page finishes that check for it — code type `ip_verify` with the
-  account's own name, then the three fields the endpoint takes with the temp
-  token as its bearer — so the person is not asked for the password again.
-  The temp token is held in the plugin's memory only: never saved, never shown.
-
-- The free-model campaign is claimed, not just reported. Beside a check-in the
-  plugin calls `GET /api/codar/activities/free-model` and, when the campaign
-  says `available`, posts its `claim` (the vendor's own one-click benefit on
-  its activities page), then says so in the check-in line. Best-effort
-  throughout: a campaign already claimed, none open, or a refused call leaves
-  the check-in's own answer untouched, so the extra can never fail the
-  check-in. It rides on the check-in, so it happens only for an account whose
-  check-in is switched on.
-
-- Chat now leaves through the same Go proxy as the card's requests, when the
-  proxy can carry it. The loader answers a `fetch` — magpie runs
-  `typeof o.fetch === "function" ? o.fetch : fetch` — so a conversation to the
-  gateway carries the desktop's TLS and HTTP shape instead of Bun's, and the
-  answer is streamed back as it arrives.
-
-### Changed
-
-- The reader, the sign-in page, the native transport and the fallback catalog
-  live in `lib/` (`lib/internal.mjs`, `lib/signinpage.mjs`, `lib/native.mjs`,
-  `lib/catalog.mjs`), so the repository root holds only the entry module and
-  the project's files. Nothing the plugin does changes; the two never-published
-  compatibility names `smslogin.mjs` and `wechatlogin.mjs` are gone.
-
-- The page method is labelled “科搭OAuth登录” in magpie's method list, so the
-  three entries read as what they are: a token, the vendor's own OAuth
-  sign-in (QR or phone, in one page), and the account's name and password.
-
-- One “科搭OAuth登录” entry in place of the separate SMS (“科搭手机号短信登录”) and
-  WeChat QR (“科搭微信扫码登录”) methods. It opens a single page on
-  `127.0.0.1` whose tabs are the two ways in the vendor's own login dialog
-  offers (扫码登录 / 手机号登录), so switching between them no longer means
-  backing out to magpie's method list. The page is redrawn to match the
-  vendor's client and site: indigo active tab, near-black primary button, the
-  QR dimmed with a sentence over it once it was scanned or is being replaced,
-  and one final screen for “登录成功” or a sign-in the vendor will not finish.
-  The SMS captcha is loaded only when its tab is first shown, and the QR code
-  starts drawing only when the page opens. The IP-check handover now opens this
-  page straight on the security check.
-
-- The sign-in page's last screen shares the page's design language instead of
-  standing apart from it: the card's own brand mark box (34px, the same radius
-  and soft shadow) in green for “登录成功” or red for “无法完成登录”, the card's
-  20px/600 heading, the body's 14px ink for the first sentence and the hint's
-  13px muted for the closing one, left aligned like the form. The sign-in's own
-  heading and hint give way to the end screen's, and a vendor's reason and the
-  closing instruction are two lines rather than one merged paragraph. Two
-  deeper shades join the page's palette in `:root` for the mark's gradients.
-
-- The sign-in options are four now, not five: “读取本机科搭令牌” (keyless) and
-  “科搭访问令牌” (paste) are one entry with an optional token field — leaving
-  it empty reads the desktop app's own login on this machine, filling it uses
-  the pasted token, and both are checked the same way (visible ASCII, an
-  account name, an unexpired exp) before anything is saved. The password
-  sign-in sits after the SMS page, because the vendor's IP check commonly
-  hands it on to that page.
-
-- The proxy flushes each piece of a streamed answer as it is written and
-  bounds the wait for a response head instead of the total length, so a long
-  chat answer is no longer cut at a deadline meant for short catalog requests.
-  After the head, silence on the body is bounded by the plugin's own stream
-  bound, which reaches the proxy as a cancelled request, not by a second
-  timer that would have to guess the same number.
-
-- The proxy forwards `X-Api-Key` and `Anthropic-Version` in addition to
-  `Authorization` and `Content-Type`: the vendor's Anthropic models
-  authenticate with the first and state the second, and a chat request that
-  carried them lost its credential and its protocol on the way out. A card
-  request never has either, so nothing changes for it.
-
-- Models carry the vendor's own credit multiple: `rate_badge` ("0.20x") is
-  read as magpie's `rate` (a positive number; "0.20x"/"0.2×" and a bare
-  number are the same rate), live and in the embedded catalog, so the badge
-  the vendor's client shows appears beside the model. The vendor's prices in
-  CNY are still not reported (see README), and a model the vendor does not
-  badge carries no `rate` key in the catalog file (`0` is "not listed", not a
-  rate, and `--check` treats a later badge as a change to regenerate for).
-
-- A base32 or percent-encoded copy of the token is cut like base64 and hex:
-  on the card, in the keyless shape pass, in model ids and names, and in the
-  generator's encoded gate and cross-string check. A token split into pieces
-  that only read as one after percent-decoding is no catalog.
-
-- A split of an *encoded* token is no catalog, no card and no `--check` line
-  either: pieces of a base32 or `%XX` copy, an id or name on each record, are
-  read together and decoded before anything is served, written or printed
-  (`%XX` triples the line or field boundaries cut in half included), each
-  field's strings are read on their own as well as with the other field, and
-  the walk follows the token, its base32 copy or its `%XX` copy piece by
-  piece, and a piece padded with prose inside its own field is read field by
-  field (the run that continues the spelling, in order) — with no opening a
-  list must carry, so a piece behind a label in its id ("model-000-ey") is
-  read too. A split that alternates between a record's id and its name is
-  read both ways (the vendor order, the file order). `--check` also reads the
-  file's values with no order at all: the pieces' own three-character runs,
-  collected across the values, must not cover the spelling. A piece the
-  window rules refuse on its own is cut as before, and the pieces left do not
-  spell the token again.
-  An activity whose model ids in order spell the token — encoded or not — is
-  not drawn at all, and `--check` prints no diff line when the old file's own
-  values reassemble into the token.
-
-- A model id that reads as a word (`sk-whisper-large-v3`, `sk-live-…` with
-  segments under 12 characters) is no longer mistaken for an `sk-` credential
-  and dropped from the whole catalog; a credential-shaped `sk-` run still is.
-
-- A catalog of long names serves within the models hook's budget: the token
-  checks read the first 512 characters of each id and name, the cross-record
-  split scan is capped at 16 KiB, each field is judged once however many
-  lists read it, and a decoded form is only walked when it holds one of the
-  key's own characters. 1000 records of ~6 KB names answer in ~3.4 s inside
-  the 20 s host budget (was ~33 s).
-
-- The entry module no longer has a default export. magpie's host and
-  OpenCode 1.x take every function a module exports as a plugin, while
-  OpenCode 2.x reads a package's default as its setup object and has no
-  fallback for a 1.x plugin's named functions; a default pointing at the same
-  plugin function is at best a duplicate entry and cannot stand in for 2.x's
-  setup. `index.mjs` now exports `CodarPlugin` by name only, and the suite
-  asserts that no default export comes back.
-
-- The catalog generator's terminal messages are English, like the rest of the
-  project's prose; what each exit code means is unchanged.
-
-- The fallback catalog is regenerated in place (`node scripts/catalog.mjs`);
-  the counts in the README and comments were updated and no longer promise a
-  fixed number.
-
-- The generator validates the token's account and expiry before fetching,
-  reads a BOM-tolerated config like the plugin does, times out instead of
-  hanging on a vendor that never answers, and says local paths through
-  `shownPath` (no account name in a log or an issue). A permission failure
-  now says to check permissions instead of "sign in once", its own output
-  path is shortened the same way, and its 15 s timeout is named as this
-  script's own budget (the plugin's hooks keep the 8 s magpie's deadlines
-  leave them).
-
-- The packed suite gate tells a Bun that is not installed (a skip locally) from
-  one that ran and failed (a failure everywhere, with or without
-  `--require-bun`); CI now runs it on Windows too, and every job has a
-  15-minute timeout. `node` and `bun` run without a shell (a missing Bun is
-  then an ENOENT, not a shell's 127 that looks like a failing program), the
-  `npm`/`tar` arguments are quoted for cmd.exe (a Windows temp path can carry
-  a space, an ampersand or a caret), and an argument it does not know is exit 2
-  instead of silently dropping the Bun half of the check. A Bun the run
-  requires but cannot find is exit 2 ("could not run here"), not 1 ("the
-  packed suite failed").
-
-- The catalog generator writes a sibling temporary file and renames it into
-  place, so a write that fails partway cannot leave `catalog.mjs` truncated;
-  a catalog file whose records are not records is exit 2 rather than a crash
-  out of `--check` (which exited 1, the code that means "regenerate"); an
-  unexpected throw is exit 2 with a shortened message; the request race keeps
-  the process alive until its budget answers; and the fetch address and
-  User-Agent come from the plugin's own constants instead of a second copy.
-
-- The packed suite now has a gate: `node scripts/tarball.mjs` packs,
-  unpacks into a scratch directory and runs the suite with Node and Bun
-  inside it. CI has a `tarball` job and the release steps call it before
-  publishing. The gate now packs the checkout whatever directory it is run
-  from, finds `npm` and `tar` on Windows, cleans up after a failure, and CI
-  passes `--require-bun` so a Bun that will not run is an error there
-  instead of a skipped half; `prepublishOnly` runs the gate itself.
-
-- Node 20 is the engine floor (`>=20`): it is the oldest Node the suite runs
-  on, and the CI matrix runs 20, 22 and 24. Node 18 is no longer supported.
-
-- The README's clipboard command honours `CODAR_HOME` the way the app does,
-  has a PowerShell line for Windows, and says what Linux needs (`xclip` and
-  a display).
 
 ### Fixed
 
@@ -946,6 +771,196 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   guard on the real run path, `claimStated`'s code gate against a 500, and the
   agent-refusal assertion on the figure the card draws.
 
+### Added
+
+- A WeChat QR sign-in: the vendor's own code flow
+  (`POST /v1/wechat/login/qrcode` → `{scene, qr_url}`, then
+  `POST /v1/wechat/login/status {scene}` every two seconds, as the web app
+  polls it). The plugin serves the page on `127.0.0.1` and makes both calls
+  itself, so the image the vendor drew is shown from the plugin and the token
+  in the status answer never reaches the page. Expiry (including the vendor's
+  business code 404) refreshes the code; a WeChat that is not bound to an
+  account, or a scan that lands on the vendor's IP check, ends with the sign-in
+  that can finish it rather than spinning.
+
+- `POST /v1/user/verify_ip` is now reached the way the vendor's web app
+  reaches it. When a password sign-in answers `code 201` /
+  `ip_verify_required`, the plugin keeps the temp token that refusal carried
+  and the SMS page finishes that check for it — code type `ip_verify` with the
+  account's own name, then the three fields the endpoint takes with the temp
+  token as its bearer — so the person is not asked for the password again.
+  The temp token is held in the plugin's memory only: never saved, never shown.
+
+- The free-model campaign is claimed, not just reported. Beside a check-in the
+  plugin calls `GET /api/codar/activities/free-model` and, when the campaign
+  says `available`, posts its `claim` (the vendor's own one-click benefit on
+  its activities page), then says so in the check-in line. Best-effort
+  throughout: a campaign already claimed, none open, or a refused call leaves
+  the check-in's own answer untouched, so the extra can never fail the
+  check-in. It rides on the check-in, so it happens only for an account whose
+  check-in is switched on.
+
+- Chat now leaves through the same Go proxy as the card's requests, when the
+  proxy can carry it. The loader answers a `fetch` — magpie runs
+  `typeof o.fetch === "function" ? o.fetch : fetch` — so a conversation to the
+  gateway carries the desktop's TLS and HTTP shape instead of Bun's, and the
+  answer is streamed back as it arrives.
+
+### Changed
+
+- The reader, the sign-in page, the native transport and the fallback catalog
+  live in `lib/` (`lib/internal.mjs`, `lib/signinpage.mjs`, `lib/native.mjs`,
+  `lib/catalog.mjs`), so the repository root holds only the entry module and
+  the project's files. Nothing the plugin does changes; the two never-published
+  compatibility names `smslogin.mjs` and `wechatlogin.mjs` are gone.
+
+- The page method is labelled “科搭OAuth登录” in magpie's method list, so the
+  three entries read as what they are: a token, the vendor's own OAuth
+  sign-in (QR or phone, in one page), and the account's name and password.
+
+- One “科搭OAuth登录” entry in place of the separate SMS (“科搭手机号短信登录”) and
+  WeChat QR (“科搭微信扫码登录”) methods. It opens a single page on
+  `127.0.0.1` whose tabs are the two ways in the vendor's own login dialog
+  offers (扫码登录 / 手机号登录), so switching between them no longer means
+  backing out to magpie's method list. The page is redrawn to match the
+  vendor's client and site: indigo active tab, near-black primary button, the
+  QR dimmed with a sentence over it once it was scanned or is being replaced,
+  and one final screen for “登录成功” or a sign-in the vendor will not finish.
+  The SMS captcha is loaded only when its tab is first shown, and the QR code
+  starts drawing only when the page opens. The IP-check handover now opens this
+  page straight on the security check.
+
+- The sign-in page's last screen shares the page's design language instead of
+  standing apart from it: the card's own brand mark box (34px, the same radius
+  and soft shadow) in green for “登录成功” or red for “无法完成登录”, the card's
+  20px/600 heading, the body's 14px ink for the first sentence and the hint's
+  13px muted for the closing one, left aligned like the form. The sign-in's own
+  heading and hint give way to the end screen's, and a vendor's reason and the
+  closing instruction are two lines rather than one merged paragraph. Two
+  deeper shades join the page's palette in `:root` for the mark's gradients.
+
+- The sign-in options are four now, not five: “读取本机科搭令牌” (keyless) and
+  “科搭访问令牌” (paste) are one entry with an optional token field — leaving
+  it empty reads the desktop app's own login on this machine, filling it uses
+  the pasted token, and both are checked the same way (visible ASCII, an
+  account name, an unexpired exp) before anything is saved. The password
+  sign-in sits after the SMS page, because the vendor's IP check commonly
+  hands it on to that page.
+
+- The proxy flushes each piece of a streamed answer as it is written and
+  bounds the wait for a response head instead of the total length, so a long
+  chat answer is no longer cut at a deadline meant for short catalog requests.
+  After the head, silence on the body is bounded by the plugin's own stream
+  bound, which reaches the proxy as a cancelled request, not by a second
+  timer that would have to guess the same number.
+
+- The proxy forwards `X-Api-Key` and `Anthropic-Version` in addition to
+  `Authorization` and `Content-Type`: the vendor's Anthropic models
+  authenticate with the first and state the second, and a chat request that
+  carried them lost its credential and its protocol on the way out. A card
+  request never has either, so nothing changes for it.
+
+- Models carry the vendor's own credit multiple: `rate_badge` ("0.20x") is
+  read as magpie's `rate` (a positive number; "0.20x"/"0.2×" and a bare
+  number are the same rate), live and in the embedded catalog, so the badge
+  the vendor's client shows appears beside the model. The vendor's prices in
+  CNY are still not reported (see README), and a model the vendor does not
+  badge carries no `rate` key in the catalog file (`0` is "not listed", not a
+  rate, and `--check` treats a later badge as a change to regenerate for).
+
+- A base32 or percent-encoded copy of the token is cut like base64 and hex:
+  on the card, in the keyless shape pass, in model ids and names, and in the
+  generator's encoded gate and cross-string check. A token split into pieces
+  that only read as one after percent-decoding is no catalog.
+
+- A split of an *encoded* token is no catalog, no card and no `--check` line
+  either: pieces of a base32 or `%XX` copy, an id or name on each record, are
+  read together and decoded before anything is served, written or printed
+  (`%XX` triples the line or field boundaries cut in half included), each
+  field's strings are read on their own as well as with the other field, and
+  the walk follows the token, its base32 copy or its `%XX` copy piece by
+  piece, and a piece padded with prose inside its own field is read field by
+  field (the run that continues the spelling, in order) — with no opening a
+  list must carry, so a piece behind a label in its id ("model-000-ey") is
+  read too. A split that alternates between a record's id and its name is
+  read both ways (the vendor order, the file order). `--check` also reads the
+  file's values with no order at all: the pieces' own three-character runs,
+  collected across the values, must not cover the spelling. A piece the
+  window rules refuse on its own is cut as before, and the pieces left do not
+  spell the token again.
+  An activity whose model ids in order spell the token — encoded or not — is
+  not drawn at all, and `--check` prints no diff line when the old file's own
+  values reassemble into the token.
+
+- A model id that reads as a word (`sk-whisper-large-v3`, `sk-live-…` with
+  segments under 12 characters) is no longer mistaken for an `sk-` credential
+  and dropped from the whole catalog; a credential-shaped `sk-` run still is.
+
+- A catalog of long names serves within the models hook's budget: the token
+  checks read the first 512 characters of each id and name, the cross-record
+  split scan is capped at 16 KiB, each field is judged once however many
+  lists read it, and a decoded form is only walked when it holds one of the
+  key's own characters. 1000 records of ~6 KB names answer in ~3.4 s inside
+  the 20 s host budget (was ~33 s).
+
+- The entry module no longer has a default export. magpie's host and
+  OpenCode 1.x take every function a module exports as a plugin, while
+  OpenCode 2.x reads a package's default as its setup object and has no
+  fallback for a 1.x plugin's named functions; a default pointing at the same
+  plugin function is at best a duplicate entry and cannot stand in for 2.x's
+  setup. `index.mjs` now exports `CodarPlugin` by name only, and the suite
+  asserts that no default export comes back.
+
+- The catalog generator's terminal messages are English, like the rest of the
+  project's prose; what each exit code means is unchanged.
+
+- The fallback catalog is regenerated in place (`node scripts/catalog.mjs`);
+  the counts in the README and comments were updated and no longer promise a
+  fixed number.
+
+- The generator validates the token's account and expiry before fetching,
+  reads a BOM-tolerated config like the plugin does, times out instead of
+  hanging on a vendor that never answers, and says local paths through
+  `shownPath` (no account name in a log or an issue). A permission failure
+  now says to check permissions instead of "sign in once", its own output
+  path is shortened the same way, and its 15 s timeout is named as this
+  script's own budget (the plugin's hooks keep the 8 s magpie's deadlines
+  leave them).
+
+- The packed suite gate tells a Bun that is not installed (a skip locally) from
+  one that ran and failed (a failure everywhere, with or without
+  `--require-bun`); CI now runs it on Windows too, and every job has a
+  15-minute timeout. `node` and `bun` run without a shell (a missing Bun is
+  then an ENOENT, not a shell's 127 that looks like a failing program), the
+  `npm`/`tar` arguments are quoted for cmd.exe (a Windows temp path can carry
+  a space, an ampersand or a caret), and an argument it does not know is exit 2
+  instead of silently dropping the Bun half of the check. A Bun the run
+  requires but cannot find is exit 2 ("could not run here"), not 1 ("the
+  packed suite failed").
+
+- The catalog generator writes a sibling temporary file and renames it into
+  place, so a write that fails partway cannot leave `catalog.mjs` truncated;
+  a catalog file whose records are not records is exit 2 rather than a crash
+  out of `--check` (which exited 1, the code that means "regenerate"); an
+  unexpected throw is exit 2 with a shortened message; the request race keeps
+  the process alive until its budget answers; and the fetch address and
+  User-Agent come from the plugin's own constants instead of a second copy.
+
+- The packed suite now has a gate: `node scripts/tarball.mjs` packs,
+  unpacks into a scratch directory and runs the suite with Node and Bun
+  inside it. CI has a `tarball` job and the release steps call it before
+  publishing. The gate now packs the checkout whatever directory it is run
+  from, finds `npm` and `tar` on Windows, cleans up after a failure, and CI
+  passes `--require-bun` so a Bun that will not run is an error there
+  instead of a skipped half; `prepublishOnly` runs the gate itself.
+
+- Node 20 is the engine floor (`>=20`): it is the oldest Node the suite runs
+  on, and the CI matrix runs 20, 22 and 24. Node 18 is no longer supported.
+
+- The README's clipboard command honours `CODAR_HOME` the way the app does,
+  has a PowerShell line for Windows, and says what Linux needs (`xclip` and
+  a display).
+
 ## [0.1.2] - 2026-11-04
 
 ### Fixed
@@ -1007,7 +1022,8 @@ Initial release.
 - A test suite (187 tests) on Node 18–24 and Bun across Linux, macOS and
   Windows, including a formatting test that pins `.editorconfig`.
 
-[Unreleased]: https://github.com/MisonL/magpie-plugin-codar/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/MisonL/magpie-plugin-codar/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.2.1
 [0.2.0]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.2.0
 [0.1.2]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.1.2
 [0.1.1]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.1.1
