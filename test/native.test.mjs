@@ -1130,3 +1130,18 @@ test("importing the build script builds nothing", async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("every shipped build is made without a VCS stamp", async () => {
+  // Go stamps VCS information into a binary by default, read from the
+  // checkout the build runs in — not from the source. The 0.2.0 through
+  // 0.2.3 builds carried vcs.revision=c90d4d9 (v0.1.2) and
+  // vcs.modified=true because native/bin was last built before the 0.2.0
+  // tree, so the stamp named a commit the binary was not built from. A
+  // review reads build info; it must not read something false, so the flag
+  // is pinned here rather than left out by habit.
+  const { buildArgs } = await import("../scripts/build-native.mjs")
+  const args = buildArgs("native/bin/x")
+  assert.ok(args.includes("-buildvcs=false"), "the build turns VCS stamping off")
+  assert.deepEqual(args.slice(0, 2), ["build", "-trimpath"], "and keeps the build path out")
+  assert.equal(args.at(-1), "./cmd/codar-proxy")
+})

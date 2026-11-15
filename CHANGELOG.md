@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-15
+
+### Fixed
+
+- The shipped proxy binaries carried a VCS stamp that named the wrong commit:
+  `go build` reads the checkout it runs in, and `native/bin` was last built
+  before the 0.2.0 tree, so every binary said `vcs.revision=c90d4d9` (v0.1.2)
+  with `vcs.modified=true`. `scripts/build-native.mjs` now passes
+  `-buildvcs=false`; `go version -m` reports the module as `(devel)` and no
+  commit, which is what a review should read. All five builds are remade from
+  the current source.
+- A `GOEXPERIMENT` set in the releaser's own `go env` reached the pinned
+  toolchains: `greenteagc` made Go 1.24.3 refuse to build at all, and any
+  value it accepted would have changed the binary behind the build's back. The
+  build pins `GOEXPERIMENT=none` (`CODAR_GOEXPERIMENT` names another
+  deliberately).
+
 ## [0.2.3] - 2026-11-14
 
 ### Changed
@@ -1037,7 +1054,8 @@ Initial release.
 - A test suite (187 tests) on Node 18–24 and Bun across Linux, macOS and
   Windows, including a formatting test that pins `.editorconfig`.
 
-[Unreleased]: https://github.com/MisonL/magpie-plugin-codar/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/MisonL/magpie-plugin-codar/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.2.4
 [0.2.3]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.2.3
 [0.2.2]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.2.2
 [0.2.1]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.2.1

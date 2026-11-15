@@ -77,6 +77,13 @@ export const binaryName = (t) => binaryFile(t.os, t.arch)
 // GODEBUG defaults each platform's sidecar was built with.
 export const buildTargets = targets
 const builtIn = (dir) => (existsSync(dir) ? readdirSync(dir).filter((n) => n.startsWith("codar-proxy-")) : [])
+// buildArgs is what every shipped binary is built with. -trimpath keeps the
+// build machine's paths out; -buildvcs=false keeps the VCS stamp out — it is
+// on by default, it reads the checkout the build runs in rather than the
+// source, and the 0.2.x builds carried vcs.revision=c90d4d9 (v0.1.2) with
+// vcs.modified=true because they were made before the 0.2.0 tree. A stamp
+// that disagrees with the source is worse than none for a review.
+export const buildArgs = (output) => ["build", "-trimpath", "-buildvcs=false", "-ldflags", "-s -w", "-o", output, "./cmd/codar-proxy"]
 
 // A real build of this program is several megabytes; anything under a page is
 // a placeholder, a truncated copy or a text file that happens to have the name.
@@ -231,8 +238,23 @@ function build(argv) {
     if (patched) writeFileSync(original, originalText.replace(/^go .*$/m, `go ${t.directive}`))
     try {
       const name = binaryName(t)
-      const env = { ...process.env, CGO_ENABLED: "0", GOOS: t.goos, GOARCH: t.arch, GOTOOLCHAIN: toolchain(t.go) }
-      const result = spawnSync(go, ["build", "-trimpath", "-ldflags", "-s -w", "-o", join(out, name), "./cmd/codar-proxy"], { cwd: root, env, stdio: "inherit" })
+            // GOEXPERIMENT is pinned to "none": a value inherited from the
+      // releaser's own `go env` is not this program's, and it either breaks
+      // the pinned toolchain (Go 1.24.3 does not know `greenteagc`, which a
+      // newer local go env file may set) or changes the binary behind the
+      // build's back. "none" is the plain build of each pinned toolchain;
+      // CODAR_GOEXPERIMENT names a different one deliberately. The Windows
+      // sidecar's own experiment list is not readable from the binary here,
+      // so this is the neutral choice rather than a measured one.
+      const experiment = process.env.CODAR_GOEXPERIMENT ?? "none"
+      const env = { ...process.env, CGO_ENABLED: "0", GOOS: t.goos, GOARCH: t.arch, GOTOOLCHAIN: toolchain(t.go), GOEXPERIMENT: experiment }
+      // -buildvcs=false: VCS stamping is on by default and reads the
+      // checkout the build runs in, not the source the binary is built from.
+      // The 0.2.x builds carried vcs.revision=c90d4d9 (v0.1.2) because they
+      // were made before the 0.2.0 tree, and the version they name is wrong
+      // whenever the working tree is dirty; a stamp that disagrees with the
+      // source is worse than none for a review.
+      const result = spawnSync(go, buildArgs(join(out, name)), { cwd: root, env, stdio: "inherit" })
       if (result.status !== 0) throw new Error(`${go} build failed for ${t.os}/${t.arch} (exit ${result.status ?? result.signal})`)
       const info = execFileSync(go, ["version", "-m", join(out, name)], { env, encoding: "utf8" })
       const got = info.match(/DefaultGODEBUG=(\S+)/)?.[1] ?? ""
