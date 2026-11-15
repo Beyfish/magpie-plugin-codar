@@ -1623,8 +1623,12 @@ export async function CodarPlugin(input) {
       // ".../v1/messages" and joins "/messages" back onto it, so both arrive
       // at the same path. Answering the bare base put the OpenAI client's
       // request at "/chat/completions", which nginx answers with a 405 page
-      // (issue #3, measured 2026-11-16).
-      loaderBase = api
+      // (issue #3, measured 2026-11-16). A custom proxy may be configured
+      // without its "/v1", so normalize it here: append "/v1" when the
+      // address omits it. pluginRequestBase adds "/v1" for Anthropic only
+      // when the base does not already end in it, so this cannot reintroduce
+      // the doubled "/v1/v1/messages".
+      loaderBase = api.endsWith("/v1") ? api : `${api}/v1`
       // If models itself is not an object (an array is also an "object" but
       // yields no model by id), treat it as absent.
       const own = was.models && typeof was.models === "object" && !Array.isArray(was.models) ? was.models : {}

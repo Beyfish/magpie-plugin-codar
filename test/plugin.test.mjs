@@ -5844,6 +5844,10 @@ test("the auth hook carries a loader, and it hands the request the account's key
   assert.equal(second.apiKey, TOKEN)
   assert.equal(second.baseURL, "https://proxy.example/v1", "the user's own base, as it was written")
   assert.equal(typeof second.fetch, "function", "a user's own base keeps the same transport")
+  const withBareProxy = await CodarPlugin()
+  await withBareProxy.config({ provider: { codar: { api: "https://proxy.example" } } })
+  const third = await withBareProxy.auth.loader(async () => auth())
+  assert.equal(third.baseURL, "https://proxy.example/v1", "a bare custom proxy gets the /v1 its Chat route needs")
   assert.deepEqual(await p.auth.loader(async () => ({ type: "api", key: "  " })), {}, "no key, no credential")
   assert.deepEqual(await p.auth.loader(async () => undefined), {}, "and no auth at all is the same")
 
