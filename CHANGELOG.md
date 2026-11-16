@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The install check added in 0.3.0 failed on CI (ubuntu runs of `node --test` and `bun test`, the Windows job and the `tarball` job) after the release was published: it copied a checkout build that CI runners without `native/bin` do not have, asserted an execute bit Windows does not have, and unpacked with `tar -C`/`-s`, which the tar on ubuntu and Windows reads as member names. The fix ships with the next version; the published 0.3.0 package itself is unaffected.
+
 ## [0.3.0] - 2026-11-16
 
 ### Changed
