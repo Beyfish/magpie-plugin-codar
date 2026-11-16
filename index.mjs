@@ -28,6 +28,7 @@
 
 
 import { CATALOG } from "./lib/catalog.mjs"
+import { guardedFetch } from "./lib/guarded.mjs"
 import { ACCOUNT, ACTIVITIES_PATH, ALREADY_CLAIMED, API, CATALOG_PATH, CHECKIN_BUDGET_MS, HOST_CHECKIN_DEADLINE_MS, HOST_USAGE_DEADLINE_MS, ID, MAGIC_KEYS, MAX_ACTIVITY_WINDOWS, MAX_ANSWER_BYTES, MAX_MODELS, MAX_SCRUB_CHARS, OPENAI, SIGN_PATH, SIGN_STATUS_PATH, TIMEOUT_MS, UA_SIDECAR, USAGE_BUDGET_MS, agentPointsOf, apiBase, appToken, balanceOf, baseURL, catalogOf, checkinWaitSecs, claimFreeModel, cleanText, chatFetchOf, codeOf, verifyIp, wechatQrOf, wechatStatusOf, WECHAT_QR_PATH, WECHAT_STATUS_PATH, configPath, cut, cutKey, decodedCarriesKey, echoesIn, echoesKey, errorCodeOf, expired, expiresAt, headerWaitOf, humanSecs, login, mergeModel, modelOf, modelsOf, noMagicKeys, numOf, payloadOf, pickOf, pointsOf, protocolOf, publishedConcurrency, readAnswer, refusedCode, refreshToken, request, restricted, runningActivities, safeTime, saidBy, saidNo, scrub, scrubLine, scrubShapes, splitAcross, splitFields, secsOf, shownPath, signMessage, signStateOf, signedOut, tokenOf, unusableKey, unwrapped, usernameOf, whyOf } from "./lib/internal.mjs"
 
 // signInResult is a token handed to the host in the shape whose expiry it
@@ -107,10 +108,12 @@ const verifyPendingOf = (e, username) => {
 // A platform without the binary, or a module that cannot load, ends at the
 // ordinary fetch: chat must not fail because the native path is missing, and
 // native.mjs's chatFetch already falls back on its own for the cases it can
-// see. This is the second chance, not a second transport.
+// see. This is the second chance, not a second transport. Both agree on the
+// redirect rule: the proxy, or guarded.mjs's fetch in its place (guarded.mjs
+// says why the conversation's credential must not follow a Location).
 const chatTransport = async (url, init) => {
   const send = await chatFetchOf()
-  return send ? send(url, init) : fetch(url, init)
+  return send ? send(url, init) : guardedFetch(url, init)
 }
 
 // claimedCampaigns and claimingCampaign hold the free-model claim down to one
@@ -204,11 +207,11 @@ export async function CodarPlugin(input) {
   // info (host.js's concurrencyOf), and the models hook runs before that, so
   // the first request after a refresh already queues under the new number.
   let vendorConcurrency = 0
-  // The loader's baseURL: the provider's address without its "/v1" (see the
-  // config hook, which sets it, and the loader's comment). Until then it is
-  // the vendor's gateway; a provider served through config always has a
-  // config hook run first.
-  let loaderBase = `${API}`
+  // The loader's baseURL: the provider's address as it is written down, "/v1"
+  // included (the config hook sets it, the loader's comment says why). Until
+  // then it is the vendor's gateway; a provider served through config always
+  // has a config hook run first.
+  let loaderBase = `${API}/v1`
 
   return {
     auth: {
@@ -1612,14 +1615,16 @@ export async function CodarPlugin(input) {
       const models = modelsOf(CATALOG, api)
       // The loader's address, as magpie's pluginRequestBase reads it
       // (plugins.go): the loader's baseURL, else the model's own URL, else
-      // the provider's api — and then the SDK's "/v1" taken off the request
-      // path and joined on. The loader answers the bare base (no "/v1"): a
-      // chat request carries its own "/v1" already, and an Anthropic one gets
-      // it back from its model's URL (modelOf writes base + "/v1" there, and
-      // the host adds it itself when that URL ends in /v1). With the loader
-      // answering ".../v1", the host took the path's "/v1" off and every
-      // Claude model was asked at ".../v1/v1/messages".
-      loaderBase = api.replace(/\/v1$/, "")
+      // the provider's api — and then, for an Anthropic request, the SDK's
+      // "/v1" taken off the request path and joined on. The loader answers
+      // the provider's address as it is written down, "/v1" included: an
+      // OpenAI client joins "/chat/completions" onto it and asks
+      // ".../v1/chat/completions", and an Anthropic one takes "/v1" off
+      // ".../v1/messages" and joins "/messages" back onto it, so both arrive
+      // at the same path. Answering the bare base put the OpenAI client's
+      // request at "/chat/completions", which nginx answers with a 405 page
+      // (issue #3, measured 2026-11-16).
+      loaderBase = api
       // If models itself is not an object (an array is also an "object" but
       // yields no model by id), treat it as absent.
       const own = was.models && typeof was.models === "object" && !Array.isArray(was.models) ? was.models : {}

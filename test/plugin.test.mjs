@@ -67,7 +67,10 @@ async function withFetch(routes, fn) {
     return { method: named ? key.slice(0, cut) : "", url: named ? key.slice(cut + 1) : key, answer }
   })
   globalThis.fetch = async (url, init) => {
-    const u = String(url)
+    // The plugin's guarded fetch hands the runtime's fetch a Request (guarded.mjs
+    // says why); a fetch that reads a URL reads it the way a fetch does.
+    const given = url instanceof Request ? url.url : url
+    const u = String(given)
     const parsed = new URL(u)
     const method = String(init?.method ?? "GET").toUpperCase()
     calls.push({ url: u, method, init })
@@ -573,7 +576,7 @@ test("a QR status the vendor answers with 404 is an expired code, not a broken p
     const u = String(url)
     if (u.startsWith("http://127.0.0.1:")) return real(u, init)
     if (u.includes("/v1/wechat/login/qrcode")) {
-      return new Response(JSON.stringify({ code: 200, data: { scene: "s-gone", qr_url: "https://example.invalid/qr.png" } }), { status: 200 })
+      return new Response(JSON.stringify({ code: 200, data: { scene: "s-gone", qr_url: "https://codar-web.speedai.com/qr.png" } }), { status: 200 })
     }
     return new Response(JSON.stringify({ message: "二维码已过期" }), { status: 404 })
   }
@@ -724,8 +727,17 @@ test("the scan status reads the vendor's words as the page's own states", () => 
   assert.equal(wechatStatusOf({ code: 200, message: "系统维护中", data: { status: "pending" } }).message, "系统维护中", "an unusual sentence still reaches the person")
   assert.equal(wechatStatusOf({ data: { status: "SUCCESS" } }).state, "error", "a success with no token is not a sign-in")
   assert.equal(wechatStatusOf({}).state, "waiting", "an answer that says nothing is not done")
-  assert.deepEqual(wechatQrOf({ data: { scene: "s1", qr_url: "https://x/y.png" } }), { scene: "s1", qrUrl: "https://x/y.png" })
+  assert.deepEqual(wechatQrOf({ data: { scene: "s1", qr_url: "https://codar-web.speedai.com/qr/s1.png" } }), { scene: "s1", qrUrl: "https://codar-web.speedai.com/qr/s1.png" })
   assert.equal(wechatQrOf({ data: { scene: "s1" } }), null, "a code without an image is no code")
+  // The image is a src in the sign-in page's browser: an answer that points it
+  // anywhere else (a loopback service, a scheme, the gateway) is no code.
+  const { qrImageURL } = testables
+  assert.equal(qrImageURL("https://codar-web.speedai.com/a.png"), true)
+  assert.equal(qrImageURL("https://api.kuaipaper.com/a.png"), true)
+  for (const bad of ["http://codar-web.speedai.com/a.png", "https://127.0.0.1:8080/x", "https://codar-web.speedai.com:8443/a.png", "https://user:pw@codar-web.speedai.com/a.png", "javascript:alert(1)", "data:image/png;base64,AA", "file:///etc/passwd", "https://evil.example/a.png", "https://api.claw.speedai.com/a.png"]) {
+    assert.equal(qrImageURL(bad), false, bad)
+    assert.equal(wechatQrOf({ data: { scene: "s1", qr_url: bad } }), null, bad)
+  }
 })
 
 test("the QR page shows the vendor's image, polls to a token, and never sees the token", async () => {
@@ -735,7 +747,7 @@ test("the QR page shows the vendor's image, polls to a token, and never sees the
   const page = await startSignIn({
     qrcode: async () => {
       asked.push("qr")
-      return { scene: "scene-1", qrUrl: "https://example.invalid/qr.png" }
+      return { scene: "scene-1", qrUrl: "https://codar-web.speedai.com/qr.png" }
     },
     status: async (scene) => {
       asked.push(scene)
@@ -752,7 +764,7 @@ test("the QR page shows the vendor's image, polls to a token, and never sees the
     assert.match(html, /\/qr/, "the page asks this listener for the code, not the vendor")
 
     const qr = await (await fetch(`${page.url}qr`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json()
-    assert.deepEqual(qr, { scene: "scene-1", qr_url: "https://example.invalid/qr.png" })
+    assert.deepEqual(qr, { scene: "scene-1", qr_url: "https://codar-web.speedai.com/qr.png" })
 
     const first = await (await fetch(`${page.url}status`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scene: "scene-1" }) })).json()
     assert.deepEqual(first, { state: "scanned", message: "" })
@@ -828,7 +840,7 @@ test("a QR state the vendor will not finish settles the wait, not five minutes l
   // long after the browser had said the account needs the SMS method.
   const { startSignIn } = await import("../lib/signinpage.mjs")
   const page = await startSignIn({
-    qrcode: async () => ({ scene: "scene-2", qrUrl: "https://example.invalid/qr.png" }),
+    qrcode: async () => ({ scene: "scene-2", qrUrl: "https://codar-web.speedai.com/qr.png" }),
     status: async () => ({ state: "error", message: "该账号当前网络需要短信安全验证：请改用「科搭OAuth登录」里的手机号登录" }),
     pollMs: 10,
   })
@@ -878,7 +890,7 @@ test("a local sign-in page answers its own origin only, and only JSON", async ()
   const qr = await startSignIn({
     sendCode: async () => {},
     verifyCode: async () => ({ token: TOKEN, username: "user_1" }),
-    qrcode: async () => ({ scene: "scene-1", qrUrl: "https://example.invalid/qr.png" }),
+    qrcode: async () => ({ scene: "scene-1", qrUrl: "https://codar-web.speedai.com/qr.png" }),
     status: async () => ({ state: "waiting" }),
   })
   try {
@@ -925,7 +937,7 @@ test("the QR sign-in is one method the host can open, and closes with the page",
     const u = String(url)
     if (u.startsWith("http://127.0.0.1:")) return realFetch(u, init)
     calls.push({ url: u, method: String(init?.method ?? "GET").toUpperCase(), body: init?.body ? JSON.parse(init.body) : null })
-    if (u.endsWith("/v1/wechat/login/qrcode")) return new Response(JSON.stringify({ code: 200, data: { scene: "s-9", qr_url: "https://example.invalid/q.png" } }), { status: 200 })
+    if (u.endsWith("/v1/wechat/login/qrcode")) return new Response(JSON.stringify({ code: 200, data: { scene: "s-9", qr_url: "https://codar-web.speedai.com/q.png" } }), { status: 200 })
     return new Response(JSON.stringify({ code: 200, data: { status: "scanned" } }), { status: 200 })
   }
   const ctl = new AbortController()
@@ -5812,22 +5824,25 @@ test("the auth hook carries a loader, and it hands the request the account's key
   // without one, but OpenCode's own entry points read the loader; an account
   // with no usable key answers {} rather than a made-up one.
   const p = await CodarPlugin()
-  // The loader answers the base a request goes under (the vendor's gateway
-  // until a config hook says otherwise) beside the key: plugins.go's
-  // pluginRequestBase reads it first, and with ".../v1" there every Claude
-  // request was asked at ".../v1/v1/messages". It also answers a fetch: the
+  // The loader answers the base a request goes under beside the key: the
+  // provider's address as it is written down, "/v1" included. An OpenAI
+  // client joins "/chat/completions" onto it and an Anthropic one takes "/v1"
+  // off the request path and joins "/messages", so the bare gateway is what
+  // both arrive at ".../v1/..." from; with the bare base here the OpenAI
+  // client asked the gateway at "/chat/completions", which nginx answers with
+  // a 405 page (issue #3, measured 2026-11-16). It also answers a fetch: the
   // host runs a loader's fetch in place of its own (host.js's
   // `typeof o.fetch === "function" ? o.fetch : fetch`), which is what puts a
   // chat request on the plugin's own transport instead of Bun's.
   const first = await p.auth.loader(async () => auth())
   assert.equal(first.apiKey, TOKEN)
-  assert.equal(first.baseURL, "https://api.claw.speedai.com")
+  assert.equal(first.baseURL, "https://api.claw.speedai.com/v1", "the address a request's /v1 is joined under")
   assert.equal(typeof first.fetch, "function", "the loader answers a fetch the host can use")
   const withProxy = await CodarPlugin()
   await withProxy.config({ provider: { codar: { api: "https://proxy.example/v1" } } })
   const second = await withProxy.auth.loader(async () => auth())
   assert.equal(second.apiKey, TOKEN)
-  assert.equal(second.baseURL, "https://proxy.example", "the user's own base, without its /v1")
+  assert.equal(second.baseURL, "https://proxy.example/v1", "the user's own base, as it was written")
   assert.equal(typeof second.fetch, "function", "a user's own base keeps the same transport")
   assert.deepEqual(await p.auth.loader(async () => ({ type: "api", key: "  " })), {}, "no key, no credential")
   assert.deepEqual(await p.auth.loader(async () => undefined), {}, "and no auth at all is the same")

@@ -439,6 +439,11 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 	if req.URL.Scheme != "https" {
 		return errors.New("codar-proxy: redirect leaves https")
 	}
+	// The first request is checked portless (officialURL), and a redirect that
+	// keeps the host name but not the port is a different service.
+	if req.URL.Port() != "" {
+		return errors.New("codar-proxy: redirect names a port")
+	}
 	host := strings.TrimSuffix(strings.ToLower(req.URL.Hostname()), ".")
 	if !officialHosts[host] {
 		return errors.New("codar-proxy: redirect leaves the official hosts")

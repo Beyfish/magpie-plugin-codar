@@ -285,7 +285,7 @@ const main = async () => {
     // generator script, both tests' helpers and the docs the style test reads.
     // A file dropped from `files` fails here with this message rather than
     // deep inside the suite as "node --test failed".
-    for (const file of ["index.mjs", "lib/internal.mjs", "lib/signinpage.mjs", "lib/native.mjs", "native/binary-name.mjs", "lib/catalog.mjs", "scripts/catalog.mjs", "scripts/tarball.mjs", "scripts/build-native.mjs", "native/go.mod", "test/plugin.test.mjs", "test/style.test.mjs", "test/native.test.mjs", "README.md", "CHANGELOG.md"]) {
+    for (const file of ["index.mjs", "lib/internal.mjs", "lib/signinpage.mjs", "lib/native.mjs", "lib/guarded.mjs", "native/binary-name.mjs", "lib/catalog.mjs", "scripts/catalog.mjs", "scripts/tarball.mjs", "scripts/build-native.mjs", "native/go.mod", "test/plugin.test.mjs", "test/style.test.mjs", "test/native.test.mjs", "test/guarded.test.mjs", "README.md", "CHANGELOG.md"]) {
       if (!existsSync(join(pkg, file))) throw new Error(`the tarball is missing ${file}, which the suite needs`)
     }
     // The main package must not carry the builds: each is its own platform

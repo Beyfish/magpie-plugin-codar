@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The provider's `baseURL` ended at the gateway, without `/v1`: an OpenAI-compatible client joins `/chat/completions` onto the base and asked `https://api.claw.speedai.com/chat/completions`, which the gateway answers with a 405 page (issue #3). The loader now answers the base with `/v1`, as the vendor's own documents it, and the config hook passes a user's own base through unchanged.
+- The fallback transport followed a redirect to any host. When the Go proxy could not run, requests and chat went through `fetch`, which follows a `Location` and carries `Authorization` to it; the proxy refuses a hop off the host and port it started on, and the fallback now applies the same rule (`lib/guarded.mjs`): at most five hops on the origin the request started on, a one-shot body stops at the redirect, and the redirect is returned as the answer.
+- The sign-in page took the account's QR code image from any URL the vendor's answer named. It is now only loaded from the vendor's own hosts over https.
+- The proxy refuses a redirect that names a port, not only one that names another host: `https://api.claw.speedai.com:8443` is another service on the vendor's name.
 - The install check added in 0.3.0 failed on CI (ubuntu runs of `node --test` and `bun test`, the Windows job and the `tarball` job) after the release was published: it copied a checkout build that CI runners without `native/bin` do not have, asserted an execute bit Windows does not have, and unpacked with `tar -C`/`-s`, which the tar on ubuntu and Windows reads as member names. The fix ships with the next version; the published 0.3.0 package itself is unaffected.
 
 ## [0.3.0] - 2026-11-16

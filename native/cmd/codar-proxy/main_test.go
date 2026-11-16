@@ -401,6 +401,11 @@ func TestCheckRedirectKeepsTheAllowance(t *testing.T) {
 		"https://evil.api.claw.speedai.com/collect",
 		"https://evil.example/collect",
 		"file:///etc/passwd",
+		// A port is not the host it names: the first request's URL is checked
+		// portless, and a redirect that keeps the name but changes the service
+		// is a different place to send the credential.
+		"https://api.claw.speedai.com:8443/collect",
+		"https://api.claw.speedai.com:80/collect",
 	} {
 		if err := checkRedirect(mk(raw), nil); err == nil {
 			t.Errorf("redirect to %s was followed", raw)
