@@ -151,8 +151,11 @@ export const requireNativeBin = (unpacked) => {
 //   answer      the JSON the started proxy answered probe.url with
 export const consumerInstall = async ({ dir, manager, main, platform, probe = {} }) => {
   mkdirSync(dir, { recursive: true })
+  // Piped through run(), which quotes for cmd.exe on Windows: -C is a GNU tar
+  // transformation there, and a raw execFileSync would hand Windows' own tar
+  // an argument it reads as a member name ("Not found in archive").
   const mainUnpacked = join(dir, "main-unpacked")
-  execFileSync("tar", ["-xzf", main, "-C", dir, "-s", "|^package|main-unpacked|"])
+  run("tar", ["-xzf", main, "-C", dir, "-s", "|^package|main-unpacked|"])
   const manifest = JSON.parse(readFileSync(join(mainUnpacked, "package.json"), "utf8"))
   // The platform package each tarball holds, by the name in its own manifest.
   const published = {}
