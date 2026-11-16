@@ -6504,8 +6504,10 @@ test("the tarball gate fails on a Bun that runs and fails", { skip: process.plat
     writeFileSync(join(bin, "bun"), "#!/bin/sh\necho fake bun: a test failed\nexit 1\n")
     chmodSync(join(bin, "bun"), 0o755)
     const here = fileURLToPath(new URL("..", import.meta.url))
+    // The install check needs a build and a minute; this test is about the
+    // Bun half, and the gate already ran when the suite is inside the tarball.
     const run = spawnSync(process.execPath, [join(here, "scripts", "tarball.mjs")], {
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CODAR_TARBALL_GATE: "1" },
       encoding: "utf8",
       timeout: 110000,
     })

@@ -902,6 +902,10 @@ const server = createServer((socket) => {
 server.listen(address, () => writeFileSync(ready, JSON.stringify({ transport, address })))
 `
 
+// Windows is left out: npm's `.cmd` shims launch through a shell whose setup
+// this check's own registry server has to answer, and it has not been made to
+// work there yet (it failed on a real Windows machine: "Child returned status
+// 128"). Everything else about Windows is covered by the windows job.
 test("the packed main package installs and starts exactly this machine's platform package", { skip: process.platform === "win32" || process.env.CODAR_PLUGIN_DISABLE_NATIVE === "1", timeout: INSTALL_MS }, async () => {
   const { consumerInstall, packedPackage } = await import("../scripts/tarball.mjs")
   const { packageName } = await import("../native/binary-name.mjs")
@@ -1269,8 +1273,10 @@ test("the plugin opens the proxy from the platform package that was installed", 
   }
 })
 
-test("a release ships each build as its own package, and the main package names all five", async () => {
-  const { checkPackages, mainPackageProblems, stagePackages } = await import("../scripts/native-packages.mjs")
+// Two spawns of npm per package (view, publish preflight) put this past the
+// runners' default five-second bound on a loaded machine.
+test("a release ships each build as its own package, and the main package names all five", { timeout: 120000 }, async () => {
+  const { checkPackages, mainPackageProblems, stagePackages, took } = await import("../scripts/native-packages.mjs")
   const { packageName } = await import("../native/binary-name.mjs")
   const bin = mkdtempSync(join(tmpdir(), "codar-native-pkgs-bin-"))
   const out = mkdtempSync(join(tmpdir(), "codar-native-pkgs-out-"))
@@ -1337,6 +1343,16 @@ test("a release ships each build as its own package, and the main package names 
       "a range instead of the exact version was not reported",
     )
     assert.match(mainPackageProblems({ ...good, files: [...good.files, "native/bin"] }).join(" "), /native\/bin/, "the five builds would ship twice")
+
+  // A version already on the registry cannot be replaced, and publishing the
+  // rest of a version half way leaves one nobody can finish. The preflight is
+  // read against the real registry: 0.3.0 is published, a version nobody has
+  // taken is not, and a package that does not exist is not taken either.
+  if (process.env.CODAR_OFFLINE !== "1") {
+    assert.deepEqual(took([{ name: "magpie-plugin-codar-darwin-x64" }], "0.3.0"), ["magpie-plugin-codar-darwin-x64"], "a taken version was not seen as taken")
+    assert.deepEqual(took([{ name: "magpie-plugin-codar-darwin-x64" }], "9.9.99"), [], "an unpublished version was seen as taken")
+    assert.deepEqual(took([{ name: "magpie-plugin-codar-darwin-artifact-not-real" }], "0.3.0"), [], "a package that does not exist was seen as taken")
+  }
   } finally {
     for (const dir of [bin, out]) rmSync(dir, { recursive: true, force: true })
   }

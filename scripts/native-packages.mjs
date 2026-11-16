@@ -192,16 +192,46 @@ function main(argv) {
     console.error(`native-packages: ${bad.map((r) => `${r.name} ${r.reason}`).join("; ")}`)
     return 1
   }
+  // Before the first upload: a version any of these already has cannot be
+  // replaced, and a run that stops half way leaves the rest of the version
+  // behind it. Asking first turns that into one message with nothing published.
+  const already = took(wrote, manifest.version)
+  if (already.length) {
+    console.error(`native-packages: ${already.join(", ")} already published at ${manifest.version}; nothing was published. Bump the version instead of reusing it.`)
+    return 1
+  }
   for (const p of wrote) {
     // --access public: a scoped name defaults to private, and these are
     // unscoped, but the flag is what npm documents for a first publish.
     const out = spawnSync("npm", ["publish", "--access", "public"], { cwd: p.dir, stdio: "inherit" })
     if (out.status !== 0) {
-      console.error(`native-packages: publishing ${p.name} failed (exit ${out.status})`)
+      console.error(`native-packages: publishing ${p.name} failed (exit ${out.status}); the packages before it are published, and this version cannot be completed — bump the version for the rest`)
       return 1
     }
   }
   return 0
+}
+
+// took names the packages in wrote that the registry already has at version.
+// A package absent from the registry answers 404; any other answer counts as
+// taken, because a publish would be refused anyway and guessing wrong the other
+// way means a half-published version.
+export function took(wrote, version) {
+  const taken = []
+  for (const p of wrote) {
+    // --json puts the refusal on stdout too (`{"error":{"code":"E404",…}}`),
+    // so the answer is read as JSON and a 404 in it is "not published".
+    const shown = spawnSync("npm", ["view", `${p.name}@${version}`, "version", "--json"], { encoding: "utf8" })
+    let said
+    try {
+      said = JSON.parse(String(shown.stdout ?? "").trim())
+    } catch {
+      said = undefined
+    }
+    if (said && said !== "undefined" && !said.error) taken.push(p.name)
+    else if (shown.status !== 0 && said?.error?.code !== "E404") taken.push(p.name)
+  }
+  return taken
 }
 
 const isMain = (() => {

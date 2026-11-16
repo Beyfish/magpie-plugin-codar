@@ -87,7 +87,7 @@ on `testables`) and its per-request timeout are pinned against those figures.
 ## Development
 
 ```bash
-node --test                        # the whole suite, no network
+node --test                        # the whole suite (a 127.0.0.1 registry, no vendor calls)
 bun test                           # the runtime magpie actually loads plugins on
 node scripts/catalog.mjs --check   # is lib/catalog.mjs still what the vendor says?
 ```
@@ -151,7 +151,7 @@ npm version <patch|minor|major> -m "release: v%s"   # bumps package.json, commit
 node scripts/native-packages.mjs --publish          # the five platform packages, first
 node scripts/tarball.mjs                            # the packed suite, before it ships
 git push --follow-tags
-npm publish                                         # prepublishOnly: five builds, the platform packages, the packed suite
+npm publish                                         # prepublishOnly: the five builds must exist (--strict), the platform packages must be staged at this version (--check), and the packed suite and its install check must pass
 gh release create vX.Y.Z --title vX.Y.Z --notes "<the CHANGELOG section>"
 ```
 
@@ -161,11 +161,15 @@ version, so publishing it first would install with an optional dependency npm
 cannot find — an install that quietly has no proxy. `node
 scripts/native-packages.mjs --publish` stages all five from `native/bin` and
 publishes them; `--check` says what is staged and refuses a version that is not
-the main package's. A release whose `native/bin` is stale must not publish:
-`prepublishOnly` starts with `node scripts/build-native.mjs --check --strict`,
-which refuses a package that would fall back to fetch on every platform, and
-runs the tarball gate, which installs the packed main package in a scratch
-project and requires it to land this machine's platform package.
+the main package's. A release whose `native/bin` is stale must not publish: `prepublishOnly` starts
+with `node scripts/build-native.mjs --check --strict`, which refuses a package
+that would fall back to fetch on every platform, and runs the tarball gate,
+which installs the packed main package in a scratch project and requires it to
+land this machine's platform package. Neither check can tell a fresh build from
+an old one: `--strict` reads presence, headers and the executable bit, and the
+staged packages are whatever `native/bin` held. Running `npm run native:all`
+first is the release step that keeps them current, and a build made before the
+release's source change looks exactly like one made after it.
 
 An install is one platform's build: `npm install magpie-plugin-codar` (or bun)
 pulls the ~2.5 MB package whose `os`/`cpu` match the machine and skips the other

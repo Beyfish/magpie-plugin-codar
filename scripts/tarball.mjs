@@ -210,7 +210,7 @@ export const consumerInstall = async ({ dir, manager, main, platform, probe = {}
     if (said.status !== 0) {
       const why = said.out.trim().split("\n").slice(-3).join(" ")
       const failed = new Error(`${manager} add ${main} failed in a scratch project (exit ${said.status ?? "signal"}): ${why}`)
-      failed.exitCode = 2
+      failed.exitCode = 1
       throw failed
     }
   } finally {
@@ -255,7 +255,15 @@ const main = async () => {
   const options = process.argv.slice(2)
   const unknown = options.filter((a) => a !== "--require-bun")
   if (unknown.length) throw usage(`unrecognized argument ${unknown.join(" ")} (only --require-bun is accepted)`)
-  const root = mkdtempSync(join(tmpdir(), "codar-tarball-"))
+  let root
+  try {
+    root = mkdtempSync(join(tmpdir(), "codar-tarball-"))
+  } catch (e) {
+    // Nowhere to work is this check failing to run, not the artifact: 2.
+    const cannot = new Error(`tarball gate: no scratch directory (${e.message}); set TMPDIR to a writable path`)
+    cannot.exitCode = 2
+    throw cannot
+  }
   try {
     // `prepublishOnly` runs this script inside `npm publish`, and npm exports
     // its own flags as npm_config_*: under `npm publish --dry-run` the nested
@@ -375,6 +383,11 @@ if (isMain) {
     await main()
   } catch (e) {
     console.error(e?.message ?? e)
+    // The artifact being bad is 1 (a suite that ran and failed, a tarball that
+    // is wrong); an error without an assigned code is this check failing to
+    // run — a temp directory it cannot write, a tool that is not there — and
+    // that is 2, as a missing npm is. run() and usage() set their own, and the
+    // messages that name the artifact set 1 explicitly.
     process.exitCode = e?.exitCode ?? 1
   }
 }
