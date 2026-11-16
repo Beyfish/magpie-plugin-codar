@@ -213,26 +213,44 @@ function main(argv) {
 }
 
 // took names the packages in wrote that the registry already has at version.
-// A package absent from the registry answers 404; any other answer counts as
-// taken, because a publish would be refused anyway and guessing wrong the other
-// way means a half-published version.
-export function took(wrote, version) {
+// It reads the packument over HTTPS rather than shelling out to `npm view`:
+// npm is npm.cmd on Windows, where spawnSync finds it only through a shell,
+// and the version the registry was asked about came back wrong that way. A
+// packument is the registry's own answer, the same one `npm view` reads.
+export function took(wrote, version, { registry = "https://registry.npmjs.org" } = {}) {
   const taken = []
   for (const p of wrote) {
-    // --json puts the refusal on stdout too (`{"error":{"code":"E404",…}}`),
-    // so the answer is read as JSON and a 404 in it is "not published".
-    const shown = spawnSync("npm", ["view", `${p.name}@${version}`, "version", "--json"], { encoding: "utf8" })
-    let said
+    let doc
+    const got = spawnSync(process.execPath, ["-e", readPackument, `${registry.replace(/\/$/, "")}/${p.name}`, p.name], { encoding: "utf8" })
     try {
-      said = JSON.parse(String(shown.stdout ?? "").trim())
+      doc = JSON.parse(String(got.stdout ?? "").trim().split("\n").at(-1))
     } catch {
-      said = undefined
+      doc = undefined
     }
-    if (said && said !== "undefined" && !said.error) taken.push(p.name)
-    else if (shown.status !== 0 && said?.error?.code !== "E404") taken.push(p.name)
+    if (doc?.error && doc.error !== 404) throw new Error(`${p.name}: the registry answered ${doc.error}`)
+    // versions is an array of the published versions, as the child printed it.
+    if (Array.isArray(doc?.versions) && doc.versions.includes(version)) taken.push(p.name)
   }
   return taken
 }
+
+// readPackument runs in a child process as a script: a small program rather
+// than a chain of synchronous calls, so the archive is decompressed off the
+// main thread's stack. It prints {versions: [...]} or {error: status}.
+const readPackument = `
+const [url, name] = process.argv.slice(1)
+const get = (u) => new Promise((resolve, reject) => require(u.startsWith("https:") ? "node:https" : "node:http").get(u, (res) => {
+  if (res.statusCode === 302 || res.statusCode === 301) { res.resume(); return resolve(get(res.headers.location)) }
+  const chunks = []
+  res.on("data", (c) => chunks.push(c))
+  res.on("end", () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }))
+}).on("error", reject))
+get(url).then(({ status, body }) => {
+  if (status !== 200) return console.log(JSON.stringify({ error: status }))
+  const doc = JSON.parse(body.toString("utf8"))
+  console.log(JSON.stringify({ versions: Object.keys(doc.versions || {}) }))
+}).catch((e) => console.log(JSON.stringify({ error: String(e && e.message || e) })))
+`
 
 const isMain = (() => {
   try {
