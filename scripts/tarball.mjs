@@ -16,7 +16,7 @@
 
 import { execFileSync, spawn } from "node:child_process"
 import { createServer } from "node:http"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -151,11 +151,14 @@ export const requireNativeBin = (unpacked) => {
 //   answer      the JSON the started proxy answered probe.url with
 export const consumerInstall = async ({ dir, manager, main, platform, probe = {} }) => {
   mkdirSync(dir, { recursive: true })
-  // Piped through run(), which quotes for cmd.exe on Windows: -C is a GNU tar
-  // transformation there, and a raw execFileSync would hand Windows' own tar
-  // an argument it reads as a member name ("Not found in archive").
+  // Unpacked as it is and renamed, not with tar's -C transformation: that is
+  // GNU tar's, and the tar a Windows runner has reads the argument as a member
+  // name ("Not found in archive"), while the same flag in run() would be
+  // mangled by cmd.exe quoting.
+  const unpacked = join(dir, "package")
   const mainUnpacked = join(dir, "main-unpacked")
-  run("tar", ["-xzf", main, "-C", dir, "-s", "|^package|main-unpacked|"])
+  execFileSync("tar", ["-xzf", main, "-C", dir])
+  renameSync(unpacked, mainUnpacked)
   const manifest = JSON.parse(readFileSync(join(mainUnpacked, "package.json"), "utf8"))
   // The platform package each tarball holds, by the name in its own manifest.
   const published = {}
