@@ -5,10 +5,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-11-16
 
 ### Changed
 
+- **A release now publishes six packages, platform ones first (0.3.0).** The compiled Go proxy and its platform packages are built inputs, so this ships as a minor version rather than a patch. Nothing a magpie user configures changes, but the shape of a release does: the five platform packages must be published before the main package, or an install lands without its proxy (it then falls back to the ordinary fetch, the old fingerprint, without saying so). Publish them with `node scripts/native-packages.mjs --publish`, then the main package.
 - **Each platform's proxy build ships in its own npm package.** `magpie-plugin-codar-<os>-<cpu>` (darwin/linux arm64+x64, win32 x64) carries one ~6 MB build and declares `os`/`cpu`, and the main package names all five in `optionalDependencies`, so a package manager installs only the one that fits the machine. An install drops from 32.0 MB unpacked (13.3 MB of tarball) to 7–8 MB on disk (about 3 MB of tarball: a 0.33 MB main package and one 2.4–2.8 MB platform package), and magpie's bun and npm both pick the right package. The `cpu` field is npm's spelling — `x64`, never Go's `amd64`, which npm refuses with `EBADPLATFORM` — and the plugin resolves the build through the installed package rather than computing a path from `process.arch`, so an x64 runtime under Rosetta gets the x64 build. Release: `node scripts/native-packages.mjs --publish` publishes the five packages before the main one, which `CONTRIBUTING.md` documents.
 - **The release gate now performs an install.** `node scripts/tarball.mjs` served the packed main package from a local registry to a scratch project, and requires the install to land exactly this machine's platform package and the plugin to start it. It previously only unpacked the tarball, which is why five builds in one package shipped for two minor versions without anything checking the install path.
 - The main package no longer carries `native/bin`; `files` and the gate refuse it, because the builds are the platform packages' now.
@@ -16,8 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - `requireNativeBin` no longer checks five builds in the tarball; the main package must carry none of them.
-
-
 
 ## [0.2.4] - 2026-11-15
 
@@ -1066,7 +1065,8 @@ Initial release.
 - A test suite (187 tests) on Node 18–24 and Bun across Linux, macOS and
   Windows, including a formatting test that pins `.editorconfig`.
 
-[Unreleased]: https://github.com/MisonL/magpie-plugin-codar/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/MisonL/magpie-plugin-codar/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/MisonL/magpie-plugin-codar/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.2.4
 [0.2.3]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.2.3
 [0.2.2]: https://github.com/MisonL/magpie-plugin-codar/releases/tag/v0.2.2
