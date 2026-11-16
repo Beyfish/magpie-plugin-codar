@@ -873,88 +873,9 @@ test("the tarball gate refuses a main package that carries the builds", async ()
   }
 })
 
-// consumerInstall is the gate's consumer-side test: a fresh project that
-// installs the packed main package the way a user's package manager would, and
-// then reports which platform packages landed, whether the plugin finds the
-// proxy through them, and whether it answers. The platform packages are the
-// release's own packed tarballs, handed in through `file:` overrides in that
-// project's package.json: the main package's optionalDependencies are the
-// release's exact-version registry names, which are not published yet when the
-// gate runs, and a `file:` dependency is not filtered by platform at all — bun
-// installs every one of them — so the overrides are the check that every
-// package is one the manager installs and that the plugin starts the one it
-// meant to.
 // A real install through the package manager and a started child per
 // manager: well past the runners' default five-second test bound.
 const INSTALL_MS = 180000
-test("the packed main package installs and starts exactly this machine's platform package", { skip: process.platform === "win32" || process.env.CODAR_PLUGIN_DISABLE_NATIVE === "1", timeout: INSTALL_MS }, async () => {
-  const { consumerInstall, packedPackage } = await import("../scripts/tarball.mjs")
-  const { packageName } = await import("../native/binary-name.mjs")
-  const managers = ["bun", "npm"].filter((cmd) => {
-    try {
-      execFileSync(cmd, ["--version"], { stdio: "ignore" })
-      return true
-    } catch {
-      return false
-    }
-  })
-  assert.ok(managers.length, "neither bun nor npm is on PATH; the gate needs one to test an install")
-  const work = mkdtempSync(join(tmpdir(), "codar-consumer-"))
-  try {
-    // A stand-in build for every platform: it speaks the real ready-file
-    // protocol, and the real Go build's own behaviour is tested next to it.
-    const platform = []
-    for (const t of buildTargets) {
-      const dir = join(work, "staged", packageName(t.os, t.arch))
-      mkdirSync(join(dir, "bin"), { recursive: true })
-      writeFileSync(join(dir, "package.json"), JSON.stringify({ name: packageName(t.os, t.arch), version: "9.9.9", os: [t.os], cpu: [t.arch === "amd64" ? "x64" : t.arch], files: ["bin"] }))
-      copyFileSync(join(here, "..", "scripts", "..", "test", "..", "native", "bin", binaryFile("darwin", "arm64")), join(dir, "bin", binaryFile(t.os, t.arch)))
-      platform.push({ name: packageName(t.os, t.arch), file: binaryFile(t.os, t.arch), dir })
-    }
-    // The builds are stand-ins: a copy of the fake proxy under each name, so a
-    // started proxy answers and logs.
-    const pw = join(work, "fake-proxy.mjs")
-    writeFileSync(pw, fakeProxy)
-    chmodSync(pw, 0o755)
-    const tarballs = []
-    for (const p of platform) {
-      copyFileSync(pw, join(p.dir, "bin", p.file))
-      chmodSync(join(p.dir, "bin", p.file), 0o755)
-      tarballs.push(packedPackage(p.dir, join(work, "tgz")))
-    }
-    const main = join(work, "main")
-    mkdirSync(main)
-    // What a release's main package says: the builds are its platform
-    // packages, at its own exact version, and none of them ships here.
-    const optionalDependencies = Object.fromEntries(platform.map((p) => [p.name, "9.9.9"]))
-    writeFileSync(join(main, "package.json"), JSON.stringify({ name: "magpie-plugin-codar", version: "9.9.9", files: ["index.mjs", "lib", "native/binary-name.mjs"], optionalDependencies }))
-    copyFileSync(join(here, "..", "index.mjs"), join(main, "index.mjs"))
-    cpSync(join(here, "..", "lib"), join(main, "lib"), { recursive: true })
-    mkdirSync(join(main, "native"), { recursive: true })
-    copyFileSync(join(here, "..", "native", "binary-name.mjs"), join(main, "native", "binary-name.mjs"))
-    const mainTarball = packedPackage(main, join(work, "tgz"))
-
-    const mine = packageName(process.platform, process.arch === "x64" ? "amd64" : process.arch)
-    const mineFile = binaryFile(process.platform, process.arch === "x64" ? "amd64" : process.arch)
-    for (const manager of managers) {
-      const report = await consumerInstall({ dir: join(work, `consumer-${manager}`), manager, main: mainTarball, platform: tarballs, probe: { url: "https://api.claw.speedai.com/v1/codar/models", env: { FAKE_PROXY_LOG: join(work, `starts-${manager}.log`) } } })
-      assert.deepEqual(report.installed, [mine], `${manager} installed ${report.installed.join(", ") || "nothing"}, not exactly ${mine}`)
-      assert.equal(report.proxy, `${mine}/bin/${mineFile}`, `${manager}: the plugin opened another package's build`)
-      assert.equal(report.started, true, `${manager}: the plugin did not start the proxy (${JSON.stringify(report)})`)
-      assert.equal(report.answer?.from, "fake", `${manager}: the proxy did not answer (${JSON.stringify(report)})`)
-
-      // With nothing offered there is no proxy, and the plugin says which
-      // reason rather than pretending it has one.
-      const bare = await consumerInstall({ dir: join(work, `bare-${manager}`), manager, main: mainTarball, platform: [], probe: { url: "https://api.claw.speedai.com/v1/codar/models" } })
-      assert.deepEqual(bare.installed, [], `${manager} installed a platform package with none offered`)
-      assert.equal(bare.proxy, null, "a proxy path was found with no platform package")
-      assert.equal(bare.unavailable, "no platform package for this machine", JSON.stringify(bare))
-    }
-  } finally {
-    rmSync(work, { recursive: true, force: true })
-  }
-})
-
 // fakeProxy is a stand-in for the Go binary: it speaks the same ready-file
 // protocol and answers every request, logging one line per start so a test
 // can see that a new process was started.
@@ -980,6 +901,81 @@ const server = createServer((socket) => {
 })
 server.listen(address, () => writeFileSync(ready, JSON.stringify({ transport, address })))
 `
+
+test("the packed main package installs and starts exactly this machine's platform package", { skip: process.platform === "win32" || process.env.CODAR_PLUGIN_DISABLE_NATIVE === "1", timeout: INSTALL_MS }, async () => {
+  const { consumerInstall, packedPackage } = await import("../scripts/tarball.mjs")
+  const { packageName } = await import("../native/binary-name.mjs")
+  const managers = ["bun", "npm"].filter((cmd) => {
+    try {
+      execFileSync(cmd, ["--version"], { stdio: "ignore" })
+      return true
+    } catch {
+      return false
+    }
+  })
+  assert.ok(managers.length, "neither bun nor npm is on PATH; the gate needs one to test an install")
+  const work = mkdtempSync(join(tmpdir(), "codar-consumer-"))
+  try {
+    // A stand-in build for every platform: it speaks the real ready-file
+    // protocol, and the real Go build's own behaviour is tested next to it.
+    const platform = []
+    for (const t of buildTargets) {
+      const dir = join(work, "staged", packageName(t.os, t.arch))
+      mkdirSync(join(dir, "bin"), { recursive: true })
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ name: packageName(t.os, t.arch), version: "9.9.9", os: [t.os], cpu: [t.arch === "amd64" ? "x64" : t.arch], files: ["bin"] }))
+      platform.push({ name: packageName(t.os, t.arch), file: binaryFile(t.os, t.arch), dir })
+    }
+    // The builds are stand-ins: a copy of the fake proxy under each name, so a
+    // started proxy answers and logs.
+    const pw = join(work, "fake-proxy.mjs")
+    writeFileSync(pw, fakeProxy)
+    chmodSync(pw, 0o755)
+    const tarballs = []
+    for (const p of platform) {
+      copyFileSync(pw, join(p.dir, "bin", p.file))
+      chmodSync(join(p.dir, "bin", p.file), 0o755)
+      tarballs.push(packedPackage(p.dir, join(work, "tgz")))
+    }
+    const main = join(work, "main")
+    mkdirSync(main)
+    // What a release's main package says: the builds are its platform
+    // packages, at its own exact version, and none of them ships here. The
+    // modules are the real ones, except that the plugin's own copy of the
+    // naming rule is the one this file imports — the gate's copies are checked
+    // here too, and the suite must not read its own expectations as the
+    // answer it is given.
+    const optionalDependencies = Object.fromEntries(platform.map((p) => [p.name, "9.9.9"]))
+    writeFileSync(join(main, "package.json"), JSON.stringify({ name: "magpie-plugin-codar", version: "9.9.9", files: ["index.mjs", "lib", "native/binary-name.mjs"], optionalDependencies }))
+    copyFileSync(join(here, "..", "index.mjs"), join(main, "index.mjs"))
+    cpSync(join(here, "..", "lib"), join(main, "lib"), { recursive: true })
+    mkdirSync(join(main, "native"), { recursive: true })
+    writeFileSync(join(main, "native", "binary-name.mjs"), copyOf("../native/binary-name.mjs"))
+    const mainTarball = packedPackage(main, join(work, "tgz"))
+
+    const mine = packageName(process.platform, process.arch === "x64" ? "amd64" : process.arch)
+    const mineFile = binaryFile(process.platform, process.arch === "x64" ? "amd64" : process.arch)
+    for (const manager of managers) {
+      const report = await consumerInstall({ dir: join(work, `consumer-${manager}`), manager, main: mainTarball, platform: tarballs, probe: { url: "https://api.claw.speedai.com/v1/codar/models", env: { FAKE_PROXY_LOG: join(work, `starts-${manager}.log`) } } })
+      assert.deepEqual(report.installed, [mine], `${manager} installed ${report.installed.join(", ") || "nothing"}, not exactly ${mine}`)
+      assert.equal(report.proxy, `${mine}/bin/${mineFile}`, `${manager}: the plugin opened another package's build`)
+      assert.equal(report.started, true, `${manager}: the plugin did not start the proxy (${JSON.stringify(report)})`)
+      assert.equal(report.answer?.from, "fake", `${manager}: the proxy did not answer (${JSON.stringify(report)})`)
+
+      // With nothing offered there is no proxy, and the plugin says which
+      // reason rather than pretending it has one.
+      const bare = await consumerInstall({ dir: join(work, `bare-${manager}`), manager, main: mainTarball, platform: [], probe: { url: "https://api.claw.speedai.com/v1/codar/models" } })
+      assert.deepEqual(bare.installed, [], `${manager} installed a platform package with none offered`)
+      assert.equal(bare.proxy, null, "a proxy path was found with no platform package")
+      assert.equal(bare.unavailable, "no platform package for this machine", JSON.stringify(bare))
+    }
+  } finally {
+    rmSync(work, { recursive: true, force: true })
+  }
+})
+
+// copyOf is a source file of this repository as text, for a fixture that must
+// carry its own copy of it. `files` is relative to this test file.
+const copyOf = (files) => readFileSync(fileURLToPath(new URL(files, import.meta.url)), "utf8")
 
 const alive = (pid) => {
   try {
@@ -1302,7 +1298,9 @@ test("a release ships each build as its own package, and the main package names 
       // An npm tarball keeps the mode it was packed with; a build that arrives
       // without it cannot be spawned, which is how the released tarball once
       // failed its own gate.
-      assert.ok((statSync(file).mode & 0o111) !== 0, `${name}'s build is not executable`)
+      // Windows has no execute bit and does not read one; the mode handed to
+      // chmodSync is what npm keeps in the tarball.
+      if (process.platform !== "win32") assert.ok((statSync(file).mode & 0o111) !== 0, `${name}'s build is not executable`)
     }
     assert.deepEqual(checkPackages({ dir: out, version }).filter((r) => r.state !== "present"), [])
 
