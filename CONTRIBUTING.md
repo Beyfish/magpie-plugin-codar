@@ -146,21 +146,40 @@ Added / Changed / Fixed / Removed. A release moves that section under the new
 version with the release date, then:
 
 ```bash
-npm run native:all                                  # the five platform builds the package ships
+npm run native:all                                  # the five platform builds
 npm version <patch|minor|major> -m "release: v%s"   # bumps package.json, commits, tags
+node scripts/native-packages.mjs --publish          # the five platform packages, first
 node scripts/tarball.mjs                            # the packed suite, before it ships
 git push --follow-tags
-npm publish                                         # prepublishOnly requires all five builds, then the packed suite
+npm publish                                         # prepublishOnly: five builds, the platform packages, the packed suite
 gh release create vX.Y.Z --title vX.Y.Z --notes "<the CHANGELOG section>"
 ```
 
-The proxy builds are not committed (`native/bin` is ignored), so a publish
-from a clean checkout has none by default: `prepublishOnly` starts with
-`node scripts/build-native.mjs --check --strict`, which refuses to publish a
-package that would fall back to fetch on every platform.
+**The platform packages are published before the main one, and at the same
+version.** The main package's `optionalDependencies` name them at its own exact
+version, so publishing it first would install with an optional dependency npm
+cannot find — an install that quietly has no proxy. `node
+scripts/native-packages.mjs --publish` stages all five from `native/bin` and
+publishes them; `--check` says what is staged and refuses a version that is not
+the main package's. A release whose `native/bin` is stale must not publish:
+`prepublishOnly` starts with `node scripts/build-native.mjs --check --strict`,
+which refuses a package that would fall back to fetch on every platform, and
+runs the tarball gate, which installs the packed main package in a scratch
+project and requires it to land this machine's platform package.
+
+An install is one platform's build: `npm install magpie-plugin-codar` (or bun)
+pulls the ~2.5 MB package whose `os`/`cpu` match the machine and skips the other
+four. Nothing runs at install time — bun blocks postinstall scripts of packages
+it does not trust, so a build placed by a script would silently be missing on
+the runtime magpie uses. The `cpu` field is npm's spelling (`x64`, `arm64`);
+npm refuses `amd64` outright, which is why the platform package is named for
+Node's architecture and the binary inside keeps Go's.
 
 `npm pack --dry-run` lists what ships: the plugin modules, the catalog and
-its generator, the tarball gate, the build script, the Go proxy with its own
-tests, the three test files, the README, the changelog and the licence. The tarball gate ships because `test:tarball` is in
+its generator, the tarball gate, the build script and the platform-package
+stager, the Go proxy with its own tests, the three test files, the README, the
+changelog and the licence — and no `native/bin`: the builds travel in the
+platform packages, and a main package carrying them again is five builds
+shipped twice. The tarball gate ships because `test:tarball` is in
 `package.json`: a script entry that points at a file outside `files` is a
 command that fails for everyone who installs the package.

@@ -5,11 +5,11 @@
 // spawns it, so the suite runs on a checkout with no build.
 
 import assert from "node:assert/strict"
-import { execFile } from "node:child_process"
+import { execFile, execFileSync } from "node:child_process"
 import { test } from "node:test"
 import { createServer } from "node:net"
 import { createServer as createServer2 } from "node:http"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -855,37 +855,103 @@ test("a release refuses a package without every platform's build", async () => {
   }
 })
 
-// the packed gate carries the source tree's builds, or none
-test("the tarball gate checks the packaged builds only when the tree built them", async () => {
+// the packed gate refuses a package that repeats the builds
+test("the tarball gate refuses a main package that carries the builds", async () => {
   const { requireNativeBin } = await import("../scripts/tarball.mjs")
-  const built = mkdtempSync(join(tmpdir(), "codar-gate-built-"))
   const bare = mkdtempSync(join(tmpdir(), "codar-gate-bare-"))
+  const empty = mkdtempSync(join(tmpdir(), "codar-gate-empty-"))
   const packed = mkdtempSync(join(tmpdir(), "codar-gate-packed-"))
-  const fill = (dir, os, arch) => {
-    const path = join(dir, binaryFile(os, arch))
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(path, Buffer.concat([headerFor(os, arch), Buffer.alloc(8192)]))
-    chmodSync(path, 0o755)
-  }
   try {
-    // a tree that never built the proxy packs none, and the gate stays quiet
-    assert.equal(requireNativeBin(bare, packed), 0, "a tree without builds was checked anyway")
-
-    const source = join(built, "native", "bin")
-    const target = join(packed, "native", "bin")
-    for (const os of ["darwin", "linux"]) for (const arch of ["arm64", "amd64"]) fill(source, os, arch)
-    fill(source, "win32", "amd64")
-    for (const os of ["darwin", "linux"]) for (const arch of ["arm64", "amd64"]) fill(target, os, arch)
-    assert.throws(() => requireNativeBin(built, packed), /codar-proxy-win32-amd64\.exe missing/, "a package missing a build passed")
-
-    fill(target, "win32", "amd64")
-    assert.equal(requireNativeBin(built, packed), 5, "five intact builds were refused")
-
-    // right name, wrong contents: the name was the whole check once
-    writeFileSync(join(target, binaryFile("darwin", "arm64")), "")
-    assert.throws(() => requireNativeBin(built, packed), /codar-proxy-darwin-arm64 only 0 bytes/, "an empty build shipped")
+    assert.equal(requireNativeBin(bare), 0, "a package without native/bin was refused")
+    mkdirSync(join(empty, "native", "bin"), { recursive: true })
+    assert.equal(requireNativeBin(empty), 0, "an empty native/bin directory was refused")
+    mkdirSync(join(packed, "native", "bin"), { recursive: true })
+    writeFileSync(join(packed, "native", "bin", binaryFile("darwin", "arm64")), Buffer.alloc(4096))
+    assert.throws(() => requireNativeBin(packed), /carries native\/bin/, "five builds shipped a second time and passed")
   } finally {
-    for (const dir of [built, bare, packed]) rmSync(dir, { recursive: true, force: true })
+    for (const dir of [bare, empty, packed]) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// consumerInstall is the gate's consumer-side test: a fresh project that
+// installs the packed main package the way a user's package manager would, and
+// then reports which platform packages landed, whether the plugin finds the
+// proxy through them, and whether it answers. The platform packages are the
+// release's own packed tarballs, handed in through `file:` overrides in that
+// project's package.json: the main package's optionalDependencies are the
+// release's exact-version registry names, which are not published yet when the
+// gate runs, and a `file:` dependency is not filtered by platform at all — bun
+// installs every one of them — so the overrides are the check that every
+// package is one the manager installs and that the plugin starts the one it
+// meant to.
+// A real install through the package manager and a started child per
+// manager: well past the runners' default five-second test bound.
+const INSTALL_MS = 180000
+test("the packed main package installs and starts exactly this machine's platform package", { skip: process.platform === "win32" || process.env.CODAR_PLUGIN_DISABLE_NATIVE === "1", timeout: INSTALL_MS }, async () => {
+  const { consumerInstall, packedPackage } = await import("../scripts/tarball.mjs")
+  const { packageName } = await import("../native/binary-name.mjs")
+  const managers = ["bun", "npm"].filter((cmd) => {
+    try {
+      execFileSync(cmd, ["--version"], { stdio: "ignore" })
+      return true
+    } catch {
+      return false
+    }
+  })
+  assert.ok(managers.length, "neither bun nor npm is on PATH; the gate needs one to test an install")
+  const work = mkdtempSync(join(tmpdir(), "codar-consumer-"))
+  try {
+    // A stand-in build for every platform: it speaks the real ready-file
+    // protocol, and the real Go build's own behaviour is tested next to it.
+    const platform = []
+    for (const t of buildTargets) {
+      const dir = join(work, "staged", packageName(t.os, t.arch))
+      mkdirSync(join(dir, "bin"), { recursive: true })
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ name: packageName(t.os, t.arch), version: "9.9.9", os: [t.os], cpu: [t.arch === "amd64" ? "x64" : t.arch], files: ["bin"] }))
+      copyFileSync(join(here, "..", "scripts", "..", "test", "..", "native", "bin", binaryFile("darwin", "arm64")), join(dir, "bin", binaryFile(t.os, t.arch)))
+      platform.push({ name: packageName(t.os, t.arch), file: binaryFile(t.os, t.arch), dir })
+    }
+    // The builds are stand-ins: a copy of the fake proxy under each name, so a
+    // started proxy answers and logs.
+    const pw = join(work, "fake-proxy.mjs")
+    writeFileSync(pw, fakeProxy)
+    chmodSync(pw, 0o755)
+    const tarballs = []
+    for (const p of platform) {
+      copyFileSync(pw, join(p.dir, "bin", p.file))
+      chmodSync(join(p.dir, "bin", p.file), 0o755)
+      tarballs.push(packedPackage(p.dir, join(work, "tgz")))
+    }
+    const main = join(work, "main")
+    mkdirSync(main)
+    // What a release's main package says: the builds are its platform
+    // packages, at its own exact version, and none of them ships here.
+    const optionalDependencies = Object.fromEntries(platform.map((p) => [p.name, "9.9.9"]))
+    writeFileSync(join(main, "package.json"), JSON.stringify({ name: "magpie-plugin-codar", version: "9.9.9", files: ["index.mjs", "lib", "native/binary-name.mjs"], optionalDependencies }))
+    copyFileSync(join(here, "..", "index.mjs"), join(main, "index.mjs"))
+    cpSync(join(here, "..", "lib"), join(main, "lib"), { recursive: true })
+    mkdirSync(join(main, "native"), { recursive: true })
+    copyFileSync(join(here, "..", "native", "binary-name.mjs"), join(main, "native", "binary-name.mjs"))
+    const mainTarball = packedPackage(main, join(work, "tgz"))
+
+    const mine = packageName(process.platform, process.arch === "x64" ? "amd64" : process.arch)
+    const mineFile = binaryFile(process.platform, process.arch === "x64" ? "amd64" : process.arch)
+    for (const manager of managers) {
+      const report = await consumerInstall({ dir: join(work, `consumer-${manager}`), manager, main: mainTarball, platform: tarballs, probe: { url: "https://api.claw.speedai.com/v1/codar/models", env: { FAKE_PROXY_LOG: join(work, `starts-${manager}.log`) } } })
+      assert.deepEqual(report.installed, [mine], `${manager} installed ${report.installed.join(", ") || "nothing"}, not exactly ${mine}`)
+      assert.equal(report.proxy, `${mine}/bin/${mineFile}`, `${manager}: the plugin opened another package's build`)
+      assert.equal(report.started, true, `${manager}: the plugin did not start the proxy (${JSON.stringify(report)})`)
+      assert.equal(report.answer?.from, "fake", `${manager}: the proxy did not answer (${JSON.stringify(report)})`)
+
+      // With nothing offered there is no proxy, and the plugin says which
+      // reason rather than pretending it has one.
+      const bare = await consumerInstall({ dir: join(work, `bare-${manager}`), manager, main: mainTarball, platform: [], probe: { url: "https://api.claw.speedai.com/v1/codar/models" } })
+      assert.deepEqual(bare.installed, [], `${manager} installed a platform package with none offered`)
+      assert.equal(bare.proxy, null, "a proxy path was found with no platform package")
+      assert.equal(bare.unavailable, "no platform package for this machine", JSON.stringify(bare))
+    }
+  } finally {
+    rmSync(work, { recursive: true, force: true })
   }
 })
 
@@ -1128,6 +1194,153 @@ test("importing the build script builds nothing", async () => {
     assert.equal(stdout, "", "importing build-native.mjs ran the build")
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("each platform's build ships as its own npm package, under npm's own platform names", async () => {
+  const { packageCpu, packageName, packageOs } = await import("../native/binary-name.mjs")
+  // npm's cpu field is matched against process.arch, and npm refuses anything
+  // else outright (npm 12.2.1, measured 2026-11-15: `cpu:["amd64"]` is
+  // EBADPLATFORM, "Actual cpu: x64"; `cpu:["x64"]` installs). Bun does not
+  // check the field at all, so the Go spelling would install for one package
+  // manager and fail for the other.
+  assert.equal(packageCpu("amd64"), "x64", "Go's amd64 is npm's x64")
+  assert.equal(packageCpu("x64"), "x64")
+  assert.equal(packageCpu("arm64"), "arm64")
+  assert.equal(packageOs("win32"), "win32", "npm's os field is Node's platform name, as it is here")
+  // The package carries the npm spelling; the binary inside it keeps the file
+  // name the build script writes and the lookup opens (binaryFile).
+  assert.equal(packageName("darwin", "x64"), "magpie-plugin-codar-darwin-x64")
+  assert.equal(packageName("win32", "amd64"), "magpie-plugin-codar-win32-x64")
+  assert.equal(packageName("linux", "arm64"), "magpie-plugin-codar-linux-arm64")
+  assert.equal(packageName("darwin", "arm64"), "magpie-plugin-codar-darwin-arm64")
+  // Every target the build script makes has a package, and no two share one.
+  const names = buildTargets.map((t) => packageName(t.os, t.arch))
+  assert.equal(names.length, 5)
+  assert.equal(new Set(names).size, names.length)
+})
+
+test("the plugin opens the proxy from the platform package that was installed", async () => {
+  // The package manager decides which platform package lands (bun and npm both
+  // filter optionalDependencies by os/cpu, measured 2026-11-15), so the lookup
+  // must follow what is installed rather than recompute it: a machine running
+  // an x64 runtime under Rosetta reports process.arch x64 and needs the x64
+  // build. The checkout's native/bin stays the fallback for a working tree.
+  //
+  // All of it in a scratch package of its own, with node_modules beside it: a
+  // suite run inside a packed tarball has its own native/bin, and a fixture
+  // planted in the real checkout's node_modules would be a file this test
+  // wrote into a directory it does not own.
+  const { packageName } = await import("../native/binary-name.mjs")
+  // tmpdir is /var on macOS, a symlink to /private/var: compared as written,
+  // the resolved path and the picked one differ and nothing matches.
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "codar-native-lookup-")))
+  mkdirSync(join(dir, "lib"))
+  mkdirSync(join(dir, "native", "bin"), { recursive: true })
+  // The plugin's own modules, so the lookup runs as the installed package does
+  // — one scratch directory's layout, not the checkout's.
+  for (const f of readdirSync(join(here, "..", "lib"))) copyFileSync(join(here, "..", "lib", f), join(dir, "lib", f))
+  copyFileSync(join(here, "..", "native", "binary-name.mjs"), join(dir, "native", "binary-name.mjs"))
+  const name = packageName("darwin", "arm64")
+  const pkg = join(dir, "node_modules", name)
+  const file = join(pkg, "bin", binaryFile("darwin", "arm64"))
+  // Each case is a fresh import, because a resolution cache would answer the
+  // last one otherwise.
+  const lookup = async (platform, arch) => (await import(`${pathToFileURL(join(dir, "lib", "native.mjs")).href}?${Math.random()}`)).binaryPath(platform, arch)
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(join(pkg, "package.json"), JSON.stringify({ name, version: "0.0.0" }))
+    writeFileSync(file, Buffer.concat([headerFor("darwin", "arm64"), Buffer.alloc(8192)]))
+    assert.equal(await lookup("darwin", "arm64"), file, "the installed package was not opened")
+    // The lookup's first answer is this platform's package. Its second is the
+    // other architecture of the same platform when that is what landed; the
+    // fallback is the checkout's build for the architecture asked for.
+    assert.equal(await lookup("darwin", "x64"), file)
+    assert.equal(await lookup("linux", "arm64"), join(dir, "native", "bin", binaryFile("linux", "arm64")))
+  } finally {
+    rmSync(pkg, { recursive: true, force: true })
+  }
+  assert.equal(await lookup("darwin", "arm64"), join(dir, "native", "bin", binaryFile("darwin", "arm64")), "the checkout did not answer once the package was gone")
+  // CODAR_PROXY_BIN still wins over both.
+  const saved = process.env.CODAR_PROXY_BIN
+  process.env.CODAR_PROXY_BIN = join(tmpdir(), "codar-native-test-override")
+  try {
+    assert.equal(await lookup("darwin", "arm64"), join(tmpdir(), "codar-native-test-override"))
+  } finally {
+    if (saved === undefined) delete process.env.CODAR_PROXY_BIN
+    else process.env.CODAR_PROXY_BIN = saved
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a release ships each build as its own package, and the main package names all five", async () => {
+  const { checkPackages, mainPackageProblems, stagePackages } = await import("../scripts/native-packages.mjs")
+  const { packageName } = await import("../native/binary-name.mjs")
+  const bin = mkdtempSync(join(tmpdir(), "codar-native-pkgs-bin-"))
+  const out = mkdtempSync(join(tmpdir(), "codar-native-pkgs-out-"))
+  const version = "9.9.9"
+  try {
+    for (const t of buildTargets) {
+      const path = join(bin, binaryFile(t.os, t.arch))
+      writeFileSync(path, Buffer.concat([headerFor(t.os, t.arch), Buffer.alloc(8192)]))
+      chmodSync(path, 0o755)
+    }
+    const staged = stagePackages({ bin, out, version })
+    assert.equal(staged.length, 5, "not every platform got a package")
+    for (const t of buildTargets) {
+      const name = packageName(t.os, t.arch)
+      const dir = join(out, name)
+      const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))
+      assert.equal(manifest.name, name)
+      assert.equal(manifest.version, version, "a package's version is the release's")
+      assert.deepEqual(manifest.os, [t.os], "npm matches os against process.platform")
+      assert.deepEqual(manifest.cpu, [t.arch === "amd64" ? "x64" : t.arch], "npm matches cpu against process.arch")
+      assert.deepEqual(manifest.files, ["bin"], "only the build ships")
+      assert.equal(manifest.license, "MIT")
+      const file = join(dir, "bin", binaryFile(t.os, t.arch))
+      assert.deepEqual(readFileSync(file), readFileSync(join(bin, binaryFile(t.os, t.arch))), "the build was not copied")
+      // An npm tarball keeps the mode it was packed with; a build that arrives
+      // without it cannot be spawned, which is how the released tarball once
+      // failed its own gate.
+      assert.ok((statSync(file).mode & 0o111) !== 0, `${name}'s build is not executable`)
+    }
+    assert.deepEqual(checkPackages({ dir: out, version }).filter((r) => r.state !== "present"), [])
+
+    // A version that drifted from the main package's is a package nobody's
+    // optionalDependencies name, and npm would refuse it as unsupported.
+    const drifted = checkPackages({ dir: out, version: "9.9.10" })
+    assert.equal(drifted.filter((r) => r.state !== "present").length, 5, "a drifted version passed")
+    // A build missing from the staging area must not become an empty package.
+    rmSync(join(out, packageName("linux", "arm64"), "bin", binaryFile("linux", "arm64")))
+    const broken = checkPackages({ dir: out, version }).filter((r) => r.state !== "present")
+    assert.equal(broken.length, 1)
+    assert.match(broken[0].reason, /missing/)
+    let refused
+    try {
+      stagePackages({ bin: join(bin, "nowhere"), out, version })
+    } catch (e) {
+      refused = e
+    }
+    assert.match(refused?.message ?? "", /no build/, "staging a platform with no build did not refuse")
+
+    // What the main package must say for the platform packages to be reached.
+    const good = {
+      name: "magpie-plugin-codar",
+      version,
+      optionalDependencies: Object.fromEntries(buildTargets.map((t) => [packageName(t.os, t.arch), version])),
+      files: ["index.mjs", "native/binary-name.mjs"],
+    }
+    assert.deepEqual(mainPackageProblems(good), [])
+    const { [packageName("win32", "amd64")]: dropped, ...fewer } = good.optionalDependencies
+    assert.match(mainPackageProblems({ ...good, optionalDependencies: fewer }).join(" "), /win32-x64/, "a platform package left out was not reported")
+    assert.match(
+      mainPackageProblems({ ...good, optionalDependencies: { ...good.optionalDependencies, [packageName("linux", "x64")]: "^9.9.9" } }).join(" "),
+      /linux-x64/,
+      "a range instead of the exact version was not reported",
+    )
+    assert.match(mainPackageProblems({ ...good, files: [...good.files, "native/bin"] }).join(" "), /native\/bin/, "the five builds would ship twice")
+  } finally {
+    for (const dir of [bin, out]) rmSync(dir, { recursive: true, force: true })
   }
 })
 

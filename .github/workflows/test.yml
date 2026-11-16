@@ -50,9 +50,9 @@ jobs:
   # the suite must pass from the published artifact, not only from a checkout:
   # `files` is what decides what ships, and a test that references a file
   # outside it passes here and fails for every user. 0.1.2 was exactly that.
-  # It also gets the native job's builds, so the gate checks a tarball that
-  # actually carries all five; with a bare checkout it would check none and
-  # still pass.
+  # It also gets the native job's builds, so the gate stages the five platform
+  # packages from them and installs the packed main package against them; with
+  # a bare checkout it would check none and still pass.
   tarball:
     needs: native
     runs-on: ubuntu-latest

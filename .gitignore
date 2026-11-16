@@ -14,3 +14,7 @@ native/bin/
 # package's own name, which a commit of native/ would otherwise sweep in.
 native/cmd/codar-proxy/codar-proxy
 native/cmd/codar-proxy/codar-proxy.exe
+
+# The platform packages a release stages here before publishing them: each is
+# one platform's build (native/bin), packed on its own.
+native/packages/

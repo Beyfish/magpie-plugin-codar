@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Each platform's proxy build ships in its own npm package.** `magpie-plugin-codar-<os>-<cpu>` (darwin/linux arm64+x64, win32 x64) carries one ~6 MB build and declares `os`/`cpu`, and the main package names all five in `optionalDependencies`, so a package manager installs only the one that fits the machine. An install drops from 32.0 MB unpacked (13.3 MB of tarball) to 7–8 MB on disk (about 3 MB of tarball: a 0.33 MB main package and one 2.4–2.8 MB platform package), and magpie's bun and npm both pick the right package. The `cpu` field is npm's spelling — `x64`, never Go's `amd64`, which npm refuses with `EBADPLATFORM` — and the plugin resolves the build through the installed package rather than computing a path from `process.arch`, so an x64 runtime under Rosetta gets the x64 build. Release: `node scripts/native-packages.mjs --publish` publishes the five packages before the main one, which `CONTRIBUTING.md` documents.
+- **The release gate now performs an install.** `node scripts/tarball.mjs` served the packed main package from a local registry to a scratch project, and requires the install to land exactly this machine's platform package and the plugin to start it. It previously only unpacked the tarball, which is why five builds in one package shipped for two minor versions without anything checking the install path.
+- The main package no longer carries `native/bin`; `files` and the gate refuse it, because the builds are the platform packages' now.
+
+### Removed
+
+- `requireNativeBin` no longer checks five builds in the tarball; the main package must carry none of them.
+
+
+
 ## [0.2.4] - 2026-11-15
 
 ### Fixed

@@ -24,7 +24,6 @@
     "scripts/catalog.mjs",
     "scripts/tarball.mjs",
     "scripts/build-native.mjs",
-    "native/bin",
     "native/go.mod",
     "native/cmd/codar-proxy/main.go",
     "native/cmd/codar-proxy/main_test.go",
@@ -33,7 +32,8 @@
     "test/native.test.mjs",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "scripts/native-packages.mjs"
   ],
   "keywords": [
     "magpie",
@@ -59,6 +59,17 @@
     "native": "node scripts/build-native.mjs",
     "native:all": "node scripts/build-native.mjs --all",
     "native:test": "cd native && go test ./...",
-    "prepublishOnly": "node scripts/build-native.mjs --check --strict && node scripts/tarball.mjs"
+    "prepublishOnly": "node scripts/build-native.mjs --check --strict && node scripts/tarball.mjs && node scripts/native-packages.mjs --check",
+    "native:pack": "node scripts/native-packages.mjs"
+  },
+  "optionalDependencies": {
+    "magpie-plugin-codar-darwin-arm64": "0.2.4",
+    "magpie-plugin-codar-darwin-x64": "0.2.4",
+    "magpie-plugin-codar-linux-arm64": "0.2.4",
+    "magpie-plugin-codar-linux-x64": "0.2.4",
+    "magpie-plugin-codar-win32-x64": "0.2.4"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
