@@ -95,6 +95,55 @@ test("the request the rule sends on its own is the caller's", async () => {
   }
 })
 
+test("a Location on the request's own origin is a hop", async () => {
+  // The origin the rule keeps is the request's own: relative Locations are
+  // resolved against the address it was sent to, and the hop goes to the
+  // same host and port.
+  const seen = []
+  const transport = (url, init) => {
+    seen.push({ url: String(url), method: init?.method, redirected: init?.redirect })
+    const next = String(url).endsWith("/v1/models") ? null : "/v1/models"
+    return Promise.resolve(next === null ? new Response(null, { status: 200 }) : new Response(null, { status: 302, headers: { location: next } }))
+  }
+  const res = await guardedFetch(`${vendor}/v1/chat/completions`, { method: "POST", headers: { authorization: "Bearer SYNTH" }, body: "{}" }, { transport })
+  assert.equal(res.status, 200)
+  assert.deepEqual(seen, [
+    { url: `${vendor}/v1/chat/completions`, method: "POST", redirected: "manual" },
+    { url: `${vendor}/v1/models`, method: "POST", redirected: "manual" },
+  ])
+})
+
+test("a scheme written in another case is https", async () => {
+  // URL parsing reads the case of a scheme the way a browser does.
+  const { transport, asked } = planned(() => `${vendor}/v1/models`)
+  await guardedFetch(`HTTPS://api.claw.speedai.com/v1/chat/completions`, {}, { transport })
+  assert.equal(asked[0].redirected, "manual", "an upper-case https address went out unguarded")
+})
+
+test("a URL or a Request is an address like a string", async () => {
+  // The loader's fetch is handed whatever the host hands it, and fetch takes
+  // all three.
+  const { transport, asked } = planned(() => `${vendor}/v1/models`)
+  const fromUrl = await guardedFetch(new URL(`${vendor}/v1/chat/completions`), {}, { transport })
+  assert.equal(fromUrl.status, 302)
+  const fromRequest = await guardedFetch(new Request(`${vendor}/v1/chat/completions`, { method: "POST", headers: { authorization: "Bearer SYNTH" }, body: "{}" }), {}, { transport })
+  assert.equal(fromRequest.status, 302)
+  assert.deepEqual(asked.filter((a) => a.url === `${vendor}/v1/chat/completions`).length, 2, "neither address was sent")
+})
+
+test("a bytes body is sent as it was when the call began", async () => {
+  // The bytes are taken once: changing the array afterwards changes nothing.
+  const body = new Uint8Array([123, 125])
+  const sent = []
+  const transport = (url, init) => {
+    sent.push([...init.body])
+    body[0] = 91
+    return Promise.resolve(new Response(null, { status: 302, headers: { location: `${vendor}/next` } }))
+  }
+  await guardedFetch(`${vendor}/start`, { method: "POST", body }, { transport })
+  assert.deepEqual(sent, [[123, 125], [123, 125]])
+})
+
 test("the rule keeps the origin it was given, port included", () => {
   // hopOf is the guarded fetch's own answer for one Location, without a
   // socket: the origin includes the port, so another port on the vendor's name
